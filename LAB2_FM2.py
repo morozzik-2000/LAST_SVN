@@ -556,57 +556,64 @@ class Worker(QThread):
 
         demodulated_signal = lpf_cos[:-1] - lpf_sin[:-1]
 
-        # ==============================
-        # 🔴 TIMING RECOVERY (ВАЖНО!)
-        # ==============================
+        # ========== УПРОЩЕННЫЙ ПОДХОД (работает гарантированно) ==========
         samples_per_bit = int(self.Fs / self.bits_per_second)
-        nbits = len(demodulated_signal) // samples_per_bit
+
+        # 1. Сначала timing recovery на исходном сигнале
+        nbits_total = len(demodulated_signal) // samples_per_bit
 
         best_offset = 0
         best_metric = -np.inf
-
         for offset in range(samples_per_bit):
             metric = 0
-            for k in range(nbits):
+            for k in range(nbits_total):
                 idx = offset + k * samples_per_bit
                 if idx < len(demodulated_signal):
                     metric += abs(demodulated_signal[idx])
-
             if metric > best_metric:
                 best_metric = metric
                 best_offset = offset
 
-        # === Декодирование ===
-        recovered = np.zeros(nbits)
-        for k in range(nbits):
+        # 2. Декодирование с найденным offset
+        recovered_raw = np.zeros(nbits_total)
+        for k in range(nbits_total):
             idx = best_offset + k * samples_per_bit
             if idx < len(demodulated_signal):
-                recovered[k] = 1 if demodulated_signal[idx] > 0 else -1
+                recovered_raw[k] = 1 if demodulated_signal[idx] > 0 else -1
 
-        psp_bits = bits[:nbits]
+        # 3. Выравнивание через корреляцию (компенсация задержки)
+        psp_bits_full = bits[:nbits_total]
+        corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+        shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
 
-        # ==============================
-        # 🔵 ВЫРАВНИВАНИЕ (корреляция)
-        # ==============================
-        corr = np.correlate(recovered, psp_bits, mode='full')
-        shift = np.argmax(corr) - len(psp_bits) + 1
-
+        # Компенсируем сдвиг
         if shift > 0:
-            rec_aligned = recovered[shift:]
-            ref_aligned = psp_bits[:len(rec_aligned)]
+            recovered = recovered_raw[shift:]
+            psp_bits = psp_bits_full[:len(recovered)]
+        elif shift < 0:
+            recovered = recovered_raw[:shift]
+            psp_bits = psp_bits_full[-shift:]
         else:
-            ref_aligned = psp_bits[-shift:]
-            rec_aligned = recovered[:len(ref_aligned)]
+            recovered = recovered_raw
+            psp_bits = psp_bits_full
 
-        # === BER ===
-        errors = np.sum(ref_aligned != rec_aligned)
-        ber = errors / len(ref_aligned) if len(ref_aligned) > 0 else 0
+        # 4. Расчет BER
+        if len(recovered) > 0 and len(psp_bits) > 0:
+            min_len = min(len(recovered), len(psp_bits))
+            recovered = recovered[:min_len]
+            psp_bits = psp_bits[:min_len]
+            errors = np.sum(recovered != psp_bits)
+            ber = errors / min_len
+        else:
+            errors = 0
+            ber = 1.0
+
+        # Время для восстановленной ПСП
+        t_rec = np.arange(len(psp_bits)) / self.bits_per_second
 
         # === Спектры ===
         f1, pxx1 = signal.periodogram(noisy, self.Fs)
         f2, pxx2 = signal.periodogram(filtered, self.Fs)
-
-        t_rec = np.arange(nbits) / self.bits_per_second
 
         self.finished.emit({
             "t": t,
@@ -761,42 +768,64 @@ class WorkerPart2(QThread):
         f_lpf_sin, pxx_lpf_sin = signal.periodogram(lpf_sin[:-1], self.Fs)
 
         # === ДЕМОДУЛЯЦИЯ ===
-        local_cos = np.cos(2 * np.pi * F_vco * t + est[0:-2])
-        local_sin = np.sin(2 * np.pi * F_vco * t + est[0:-2])
-
         demod_signal = lpf_cos[:-1] - lpf_sin[:-1]
 
-        # === ИНТЕГРАТОР ===
+        # ========== НОВЫЙ БЛОК - ТАКОЙ ЖЕ КАК В ЧАСТИ 1 ==========
         samples_per_bit = int(self.Fs / self.bits_per_second)
-        nbits = len(demod_signal) // samples_per_bit
 
-        recovered = np.zeros(nbits)
-        for k in range(nbits):
-            seg = demod_signal[k * samples_per_bit:(k + 1) * samples_per_bit]
-            recovered[k] = 1 if np.sum(seg) > 0 else -1
+        # 1. Timing recovery (поиск оптимального offset)
+        nbits_total = len(demod_signal) // samples_per_bit
 
-        # время
-        t_rec = np.arange(nbits) / self.bits_per_second
-        t_rec = t_rec - 1 / self.bits_per_second
+        best_offset = 0
+        best_metric = -np.inf
+        for offset in range(samples_per_bit):
+            metric = 0
+            for k in range(nbits_total):
+                idx = offset + k * samples_per_bit
+                if idx < len(demod_signal):
+                    metric += abs(demod_signal[idx])
+            if metric > best_metric:
+                best_metric = metric
+                best_offset = offset
 
-        psp_bits = bits[:nbits]
+        # 2. Декодирование с найденным offset
+        recovered_raw = np.zeros(nbits_total)
+        for k in range(nbits_total):
+            idx = best_offset + k * samples_per_bit
+            if idx < len(demod_signal):
+                recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
 
-        # ========== ДОБАВЬТЕ ЭТОТ БЛОК ==========
-        # === РАСЧЁТ BER ===
-        # Выравнивание последовательностей (как в части 1)
-        corr = np.correlate(recovered, psp_bits, mode='full')
-        shift = np.argmax(corr) - len(psp_bits) + 1
+        # 3. Выравнивание через корреляцию (компенсация задержки)
+        psp_bits_full = bits[:nbits_total]
+        corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+        shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
 
+        # Компенсируем сдвиг
         if shift > 0:
-            rec_aligned = recovered[shift:]
-            ref_aligned = psp_bits[:len(rec_aligned)]
+            recovered = recovered_raw[shift:]
+            psp_bits = psp_bits_full[:len(recovered)]
+        elif shift < 0:
+            shift_abs = -shift
+            recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
+            psp_bits = psp_bits_full[shift_abs:]
         else:
-            ref_aligned = psp_bits[-shift:]
-            rec_aligned = recovered[:len(ref_aligned)]
+            recovered = recovered_raw
+            psp_bits = psp_bits_full
 
-        errors = np.sum(ref_aligned != rec_aligned)
-        ber = errors / len(ref_aligned) if len(ref_aligned) > 0 else 0
-        # =======================================
+        # 4. Расчет BER
+        if len(recovered) > 0 and len(psp_bits) > 0:
+            min_len = min(len(recovered), len(psp_bits))
+            recovered = recovered[:min_len]
+            psp_bits = psp_bits[:min_len]
+            errors = np.sum(recovered != psp_bits)
+            ber = errors / min_len if min_len > 0 else 1.0
+        else:
+            errors = 0
+            ber = 1.0
+
+        # Время для восстановленной ПСП
+        t_rec = np.arange(len(psp_bits)) / self.bits_per_second
+        # ========================================================
 
         self.finished.emit({
             "t": t,
@@ -816,8 +845,8 @@ class WorkerPart2(QThread):
             "t_rec": t_rec,
             "rec": recovered,
             "psp_bits": psp_bits,
-            "errors": errors,  # <-- ДОБАВЛЕНО
-            "ber": ber         # <-- ДОБАВЛЕНО
+            "errors": errors,
+            "ber": ber
         })
 
 
@@ -1530,7 +1559,7 @@ class MainWindow(QMainWindow):
 
         self.tabs2.addTab(self.tab_mul_sin, "Выход перемножителя (Синф.)")
         self.tabs2.addTab(self.tab_mul_cos, "Выход перемножителя (Кв.)")
-        self.tabs2.addTab(self.tab_spec_mul, "СПМ процесса на выходе перемножителя")
+        self.tabs2.addTab(self.tab_spec_mul, "СПМ процесса на выходе перемножителей")
         self.tabs2.addTab(self.tab_lpf_sin, "Выход ФНЧ (Синф.)")
         self.tabs2.addTab(self.tab_lpf_cos, "Выход ФНЧ (Кв.)")
         self.tabs2.addTab(self.tab_spec_lpf, "СПМ процесса на выходе ФНЧ")
@@ -2577,8 +2606,28 @@ class MainWindow(QMainWindow):
         self.btn_psd.setText("Расчёт СПМ...")
         self.btn_psd.setEnabled(False)
 
+    # def update_psd(self, d):
+    #     self.tab_vco_spec.plot(d["f_vco"], d["pxx_vco"])
+    #     self.btn_psd.setText("Построить СПМ")
+    #     self.btn_psd.setEnabled(True)
     def update_psd(self, d):
-        self.tab_vco_spec.plot(d["f_vco"], d["pxx_vco"])
+        """Обновляет график СПМ с правильной размерностью по оси X"""
+        # Очищаем текущую ось
+        self.tab_vco_spec.ax.clear()
+
+        # Строим график с частотой по оси X
+        self.tab_vco_spec.ax.plot(d["f_vco"], d["pxx_vco"], color='blue', linewidth=1.5)
+
+        # Настраиваем подписи осей
+        self.tab_vco_spec.ax.set_xlabel("Частота, Гц", fontsize=12)
+        self.tab_vco_spec.ax.set_ylabel("Спектральная плотность, дБ", fontsize=12)
+        self.tab_vco_spec.ax.set_title("СПМ на выходе ГУН (без переходного процесса)", fontsize=14)
+        self.tab_vco_spec.ax.grid(True, alpha=0.3)
+
+        # Обновляем canvas
+        self.tab_vco_spec.canvas.draw()
+
+        # Восстанавливаем кнопку
         self.btn_psd.setText("Построить СПМ")
         self.btn_psd.setEnabled(True)
 
