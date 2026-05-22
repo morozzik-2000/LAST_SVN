@@ -12,6 +12,592 @@ from PySide6.QtWidgets import QDialog
 from scipy.signal import correlate
 import math
 from scipy.signal import welch, savgol_filter
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+from PySide6.QtWidgets import QToolButton
+
+
+class CustomNavigationToolbar(NavigationToolbar):
+    """Кастомный тулбар с дополнительной кнопкой-переключателем"""
+
+    def __init__(self, canvas, parent, callback):
+        super().__init__(canvas, parent)
+        self.callback = callback
+        self._add_mode_button()
+
+    def _add_mode_button(self):
+        """Добавляет кнопку-переключатель режима"""
+        self.addSeparator()
+
+        # Создаем кнопку-переключатель
+        self.mode_button = QToolButton(self)
+        self.mode_button.setText("📊 Импульсы")
+        self.mode_button.setCheckable(True)
+        self.mode_button.setChecked(True)
+        self.mode_button.setToolTip("Переключить между отсчётами и ступеньками")
+        self.mode_button.setStyleSheet("""
+            QToolButton {
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 13px;
+                font-weight: bold;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+            }
+            QToolButton:hover {
+                background-color: #45a049;
+            }
+            QToolButton:pressed {
+                background-color: #3d8b40;
+            }
+        """)
+
+        self.mode_button.toggled.connect(self._on_mode_toggled)
+        self.addWidget(self.mode_button)
+
+    def _on_mode_toggled(self, checked):
+        """Обработчик переключения режима"""
+        if checked:
+            self.mode_button.setText("📊 Импульсы")
+        else:
+            self.mode_button.setText("📈 Отсчёты")
+        self.callback(checked)
+
+class LegendWindow(QWidget):
+    """Отдельное окно с легендой (без обводки)"""
+
+    def __init__(self, legend_data, is_scatter_mode, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Легенда графиков")
+        self.setWindowFlags(Qt.Tool)  # Всплывающее окно, не мешает основному
+        self.setFixedWidth(280)
+        self.setAttribute(Qt.WA_DeleteOnClose)  # Закрывается при закрытии
+
+        # Убираем обводку у окна легенды
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #f8f9fa;
+                border: none;
+            }
+            QLabel {
+                color: #333;
+                font-size: 12px;
+                background-color: transparent;
+                border: none;
+            }
+        """)
+
+        self.legend_data = legend_data
+        self.is_scatter_mode = is_scatter_mode
+        self.init_ui()
+
+    def init_ui(self):
+        """Инициализация интерфейса"""
+        layout = QVBoxLayout()
+        layout.setSpacing(8)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+
+
+        # Контейнер для элементов легенды
+        self.items_layout = QVBoxLayout()
+        self.items_layout.setSpacing(8)
+
+        # Добавляем элементы
+        self.add_legend_items()
+
+        layout.addLayout(self.items_layout)
+        layout.addStretch()
+
+        self.setLayout(layout)
+
+    def add_legend_items(self):
+        """Добавляет элементы легенды без обводки"""
+        # Очищаем существующие элементы
+        for i in reversed(range(self.items_layout.count())):
+            item = self.items_layout.itemAt(i)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for name, color, plot_type in self.legend_data:
+            item_widget = QWidget()
+            # Убираем обводку у виджета элемента
+            item_widget.setStyleSheet("border: none; background-color: transparent;")
+
+            item_layout = QHBoxLayout()
+            item_layout.setContentsMargins(5, 2, 5, 2)
+            item_layout.setSpacing(10)
+
+            # Цветной индикатор (без обводки)
+            indicator = QLabel()
+            indicator.setFixedSize(24, 24)
+            indicator.setStyleSheet("border: none; background-color: transparent;")
+
+            # Создаем пиксельную карту для индикатора
+            pixmap = QtGui.QPixmap(24, 24)
+            pixmap.fill(Qt.transparent)
+            painter = QtGui.QPainter(pixmap)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+
+            if plot_type == 'scatter':
+                # Только точка, без обводки
+                painter.setPen(QtGui.QPen(QtCore.Qt.NoPen))  # Убираем обводку
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(color)))
+                painter.drawEllipse(8, 8, 8, 8)
+            elif plot_type == 'step':
+                # Ступенчатый график - только линия
+                painter.setPen(QtGui.QPen(QtGui.QColor(color), 2))
+                painter.setBrush(QtCore.Qt.NoBrush)
+                # Рисуем линию (без точек)
+                painter.drawLine(4, 12, 20, 12)
+            else:  # line
+                # Обычная линия
+                painter.setPen(QtGui.QPen(QtGui.QColor(color), 2))
+                painter.setBrush(QtCore.Qt.NoBrush)
+                painter.drawLine(4, 12, 20, 12)
+
+            painter.end()
+            indicator.setPixmap(pixmap)
+
+            # Название графика (убираем лишние символы)
+            clean_name = name
+
+            name_label = QLabel(clean_name)
+            name_label.setWordWrap(True)
+            name_label.setStyleSheet("""
+                color: #333;
+                border: none;
+                background-color: transparent;
+                font-size: 12px;
+            """)
+
+            item_layout.addWidget(indicator)
+            item_layout.addWidget(name_label, stretch=1)
+            item_widget.setLayout(item_layout)
+
+            self.items_layout.addWidget(item_widget)
+
+    def update_legend(self, legend_data, is_scatter_mode):
+        """Обновляет содержимое легенды"""
+        self.legend_data = legend_data
+        self.is_scatter_mode = is_scatter_mode
+        self.add_legend_items()
+
+
+class PlotTabWithCheckbox(QWidget):
+    """Виджет графика с возможностью переключения между точками и ступеньками"""
+
+    def __init__(self, title, xlabel="Время, с", ylabel=""):
+        super().__init__()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Создаем фигуру
+        self.figure = Figure()
+        self.canvas = FigureCanvas(self.figure)
+
+        # Создаем кастомный тулбар
+        self.toolbar = CustomNavigationToolbar(self.canvas, self, self._on_mode_changed)
+
+        # Создаем ось
+        self.ax = self.figure.add_subplot(111)
+        self.ax.set_title(title, fontsize=14)
+        self.ax.set_xlabel(xlabel, fontsize=12)
+        self.ax.set_ylabel(ylabel, fontsize=12)
+        self.ax.grid(True, alpha=0.3)
+
+        # Добавляем виджеты
+        layout.addWidget(self.canvas)
+        layout.addWidget(self.toolbar)
+
+
+        self.setLayout(layout)
+
+        # Хранилище данных
+        self.current_x = None
+        self.current_y = None
+        self.current_label = None
+        self.is_scatter_mode = True
+
+    def _on_mode_changed(self, is_scatter):
+        """Обработчик изменения режима"""
+        self.is_scatter_mode = is_scatter
+        if self.current_x is not None and self.current_y is not None:
+            self.update_plot(self.current_x, self.current_y, self.current_label)
+
+    def update_plot(self, x, y, label=None):
+        """Обновляет график в зависимости от режима отображения"""
+        self.current_x = x
+        self.current_y = y
+        self.current_label = label
+
+        self.ax.clear()
+        self.ax.set_title(self.ax.get_title())
+        self.ax.set_xlabel(self.ax.get_xlabel())
+        self.ax.set_ylabel(self.ax.get_ylabel())
+        self.ax.grid(True, alpha=0.3)
+
+        if self.is_scatter_mode:
+            # Точечный график (отсчеты)
+            self.ax.scatter(x, y, color='red', s=40, marker='o', label=label, zorder=5)
+        else:
+            # Ступенчатый график (импульсы)
+            self.ax.step(x, y, where='post', color='red', linewidth=1.5, label=label)
+
+        if label:
+            self.ax.legend(loc='best', fontsize=10)
+
+        self.canvas.draw()
+
+class SignalModeWidget(QWidget):
+    """Виджет для выбора режима сигнала"""
+    paramsChanged = Signal()
+
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout()
+
+        group = QGroupBox("Режим сигнала")
+        group_layout = QVBoxLayout()
+
+        self.signal_mode = QComboBox()
+        self.signal_mode.addItems(["2ФМ сигнал", "Немодулированная несущая"])
+        self.signal_mode.setStyleSheet("""
+            QComboBox {
+                font-size: 14px;
+                font-weight: bold;
+                padding: 5px;
+                border: 2px solid #aaa;
+                border-radius: 8px;
+                background-color: white;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox::down-arrow {
+                image: none;
+            }
+        """)
+
+        # Пояснение
+        info_label = QLabel(
+            "ℹ️ 2ФМ сигнал: биполярная ПСП модулирует несущую\n"
+            "Немодулированная несущая: только несущая частота (без модуляции)"
+        )
+        info_label.setStyleSheet("font-size: 11px; color: #666; margin-top: 5px;")
+        info_label.setWordWrap(True)
+
+        group_layout.addWidget(QLabel("Тип сигнала:"))
+        group_layout.addWidget(self.signal_mode)
+        group_layout.addWidget(info_label)
+
+        group.setLayout(group_layout)
+        layout.addWidget(group)
+        layout.addStretch()
+        self.setLayout(layout)
+
+        self.signal_mode.currentIndexChanged.connect(self.paramsChanged.emit)
+
+    def is_modulated(self):
+        """Возвращает True если выбран 2ФМ сигнал"""
+        return self.signal_mode.currentIndex() == 0
+
+    def get_mode(self):
+        """Возвращает режим работы"""
+        return 'bpsk' if self.signal_mode.currentIndex() == 0 else 'carrier'
+
+
+class RangesTableWidget(QWidget):
+    """Виджет с таблицей диапазонов параметров (автоматическое считывание)"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        layout = QVBoxLayout()
+
+        # Заголовок
+        title = QLabel("Допустимые диапазоны параметров (текущие)")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #4CAF50; margin-bottom: 10px;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        # Поле поиска
+        search_layout = QHBoxLayout()
+        search_label = QLabel("🔍 Поиск:")
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Введите параметр для поиска...")
+        self.search_edit.textChanged.connect(self.filter_table)
+
+        search_layout.addWidget(search_label)
+        search_layout.addWidget(self.search_edit)
+        layout.addLayout(search_layout)
+
+        # Кнопка обновления
+        refresh_btn = QPushButton("🔄 Обновить диапазоны")
+        refresh_btn.clicked.connect(self.refresh_ranges)
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 5px 15px;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(refresh_btn)
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+
+        # Создаем таблицу
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Параметр", "Минимум", "Максимум", "Текущее", "Единицы"])
+
+        # ЗАПРЕЩАЕМ РЕДАКТИРОВАНИЕ - таблица только для просмотра
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+
+        # Запрещаем выделение ячеек (опционально)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+
+        # Настройка таблицы
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                alternate-background-color: #f8f9fa;
+                gridline-color: #dee2e6;
+            }
+            QTableWidget::item {
+                padding: 10px;
+            }
+            QTableWidget::item:selected {
+                background-color: #4CAF50;
+                color: white;
+            }
+            QHeaderView::section {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 10px;
+                border: none;
+                font-size: 14px;
+            }
+        """)
+
+        # Настраиваем размеры
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 350)  # Параметр (увеличен)
+        self.table.setColumnWidth(1, 100)  # Минимум
+        self.table.setColumnWidth(2, 100)  # Максимум
+        self.table.setColumnWidth(3, 100)  # Текущее
+        self.table.setColumnWidth(4, 120)  # Единицы
+
+        # Устанавливаем высоту строк
+        self.table.verticalHeader().setDefaultSectionSize(40)
+
+        layout.addWidget(self.table)
+
+        # Добавляем информационную метку
+        info_label = QLabel(
+            "ℹ️ Примечание: Таблица только для просмотра. Для изменения параметров используйте соответствующие вкладки.\n"
+            "Данные автоматически считываются из текущих настроек."
+        )
+        info_label.setStyleSheet("font-size: 11px; color: #666; margin-top: 10px; padding: 5px;")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        self.setLayout(layout)
+
+        # Инициализируем таблицу
+        self.refresh_ranges()
+
+    def collect_all_ranges(self):
+        """Собирает диапазоны из всех виджетов"""
+        ranges = []
+
+        # Получаем главное окно
+        main_window = None
+        parent = self.parent()
+        while parent:
+            if isinstance(parent, MainWindow):
+                main_window = parent
+                break
+            parent = parent.parent()
+
+        if not main_window:
+            return ranges
+
+        # 1. Системные параметры
+        sys_params = main_window.global_params.system_params
+        ranges.extend([
+            ("Скорость передачи", sys_params.bits_per_second.minimum(),
+             sys_params.bits_per_second.maximum(), sys_params.bits_per_second.value(), "бит/с"),
+            ("Частота несущей", sys_params.Fc.minimum(),
+             sys_params.Fc.maximum(), sys_params.Fc.value(), "Гц"),
+            ("Длина реализации", sys_params.T.minimum(),
+             sys_params.T.maximum(), sys_params.T.value(), "с"),
+            ("Частота дискретизации", sys_params.Fs.minimum(),
+             sys_params.Fs.maximum(), sys_params.Fs.value(), "Гц"),
+        ])
+
+        # 2. Параметры фильтра
+        filter_params = main_window.global_params.filter_params
+        ranges.extend([
+            ("Полоса пропускания (нижняя)", filter_params.filter_band.Wp_low.minimum(),
+             filter_params.filter_band.Wp_low.maximum(), filter_params.filter_band.Wp_low.value(), "Гц"),
+            ("Полоса пропускания (верхняя)", filter_params.filter_band.Wp_high.minimum(),
+             filter_params.filter_band.Wp_high.maximum(), filter_params.filter_band.Wp_high.value(), "Гц"),
+            ("Полоса заграждения (нижняя)", filter_params.filter_band.Ws_low.minimum(),
+             filter_params.filter_band.Ws_low.maximum(), filter_params.filter_band.Ws_low.value(), "Гц"),
+            ("Полоса заграждения (верхняя)", filter_params.filter_band.Ws_high.minimum(),
+             filter_params.filter_band.Ws_high.maximum(), filter_params.filter_band.Ws_high.value(), "Гц"),
+            ("Пульсации в полосе пропускания", filter_params.filter_params.gpass.minimum(),
+             filter_params.filter_params.gpass.maximum(), filter_params.filter_params.gpass.value(), "дБ"),
+            ("Затухание в полосе заграждения", filter_params.filter_params.gstop.minimum(),
+             filter_params.filter_params.gstop.maximum(), filter_params.filter_params.gstop.value(), "дБ"),
+            ("Порядок фильтра", filter_params.filter_settings.filter_order.minimum(),
+             filter_params.filter_settings.filter_order.maximum(),
+             filter_params.filter_settings.filter_order.value(), ""),
+        ])
+
+        # 3. Параметры СВН
+        pll_params = main_window.global_params.pll_params
+        ranges.extend([
+            ("Коэф. усиления ФНЧ в СВН", pll_params.Gp.minimum(),
+             pll_params.Gp.maximum(), pll_params.Gp.value(), ""),
+            ("Постоянная времени ФНЧ в СВН", pll_params.T_lf.minimum(),
+             pll_params.T_lf.maximum(), pll_params.T_lf.value(), "с"),
+            ("Крутизна ГУН", pll_params.Sr.minimum(),
+             pll_params.Sr.maximum(), pll_params.Sr.value(), "Гц/В"),
+            ("Фазовая задержка", pll_params.delay_deg.minimum(),
+             pll_params.delay_deg.maximum(), pll_params.delay_deg.value(), "град."),
+        ])
+
+        # 4. Параметры шума
+        channel_params = main_window.global_params.channel_params
+        ranges.extend([
+            ("Eb/N0", channel_params.ebn0.minimum(),
+             channel_params.ebn0.maximum(), channel_params.ebn0.value(), "дБ"),
+        ])
+
+        # 5. Параметры части 3
+        if hasattr(main_window, 'dphi'):
+            ranges.extend([
+                ("Фазовый сдвиг Δφ (ч.3)", main_window.dphi.minimum(),
+                 main_window.dphi.maximum(), main_window.dphi.value(), "град."),
+            ])
+
+        # 6. Параметры части 4
+        if hasattr(main_window, 'freq_offset'):
+            ranges.extend([
+                ("Частотная расстройка Δf (ч.4)", main_window.freq_offset.minimum(),
+                 main_window.freq_offset.maximum(), main_window.freq_offset.value(), "Гц"),
+            ])
+
+        # 7. Параметры переходного процесса
+        if hasattr(main_window, 'transition'):
+            ranges.extend([
+                ("Переходный процесс (ч.3)", main_window.transition.minimum(),
+                 main_window.transition.maximum(), main_window.transition.value(), "с"),
+            ])
+
+        if hasattr(main_window, 'transition4'):
+            ranges.extend([
+                ("Переходный процесс (ч.4)", main_window.transition4.minimum(),
+                 main_window.transition4.maximum(), main_window.transition4.value(), "с"),
+            ])
+
+        # 8. Параметры части 5
+        if hasattr(main_window, 'phase_min'):
+            ranges.extend([
+                ("Фаза от (ч.5)", main_window.phase_min.minimum(),
+                 main_window.phase_min.maximum(), main_window.phase_min.value(), "град."),
+                ("Фаза до (ч.5)", main_window.phase_max.minimum(),
+                 main_window.phase_max.maximum(), main_window.phase_max.value(), "град."),
+                ("Шаг фазы (ч.5)", main_window.phase_step.minimum(),
+                 main_window.phase_step.maximum(), main_window.phase_step.value(), "град."),
+            ])
+
+        return ranges
+
+    def refresh_ranges(self):
+        """Обновляет таблицу с текущими диапазонами"""
+        ranges = self.collect_all_ranges()
+
+        self.table.setRowCount(len(ranges))
+
+        # Создаем шрифт для всех ячеек (увеличенный)
+        cell_font = QtGui.QFont()
+        cell_font.setPointSize(14)  # Увеличенный размер шрифта
+        cell_font.setFamily("Segoe UI")  # Современный шрифт
+
+        # Шрифт для параметров (жирный)
+        param_font = QtGui.QFont()
+        param_font.setPointSize(12)
+        param_font.setFamily("Segoe UI")
+        param_font.setBold(True)
+
+        for row, (param_name, min_val, max_val, current_val, unit) in enumerate(ranges):
+            # Параметр (жирный шрифт)
+            param_item = QTableWidgetItem(param_name)
+            param_item.setFont(param_font)
+            self.table.setItem(row, 0, param_item)
+
+            # Минимум
+            min_item = QTableWidgetItem(self._format_value(min_val))
+            min_item.setFont(cell_font)
+            min_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(row, 1, min_item)
+
+            # Максимум
+            max_item = QTableWidgetItem(self._format_value(max_val))
+            max_item.setFont(cell_font)
+            max_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(row, 2, max_item)
+
+            # Текущее значение
+            current_item = QTableWidgetItem(self._format_value(current_val))
+            current_item.setFont(cell_font)
+            current_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            # Выделяем текущее значение цветом
+            current_item.setBackground(QtGui.QColor(224, 247, 250))  # Светло-голубой
+            self.table.setItem(row, 3, current_item)
+
+            # Единицы
+            unit_item = QTableWidgetItem(unit)
+            unit_item.setFont(cell_font)
+            unit_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.table.setItem(row, 4, unit_item)
+
+        # Сортируем по первому столбцу
+        self.table.sortItems(0)
+
+    def _format_value(self, value):
+        """Форматирует значение для отображения"""
+        if isinstance(value, float):
+            if value == int(value):
+                return str(int(value))
+            else:
+                return f"{value:.3f}".rstrip('0').rstrip('.')
+        return str(value)
+
+    def filter_table(self, text):
+        """Фильтрует таблицу по тексту поиска"""
+        for row in range(self.table.rowCount()):
+            param_item = self.table.item(row, 0)
+            if param_item:
+                show_row = text.lower() in param_item.text().lower()
+                self.table.setRowHidden(row, not show_row)
 
 class OverlayGraphDialog(QDialog):
     """Диалог для выбора графиков для наложения"""
@@ -78,6 +664,7 @@ class OverlayGraphDialog(QDialog):
 
 class ChannelParamsWidget(QWidget):
     """Виджет для параметров канала (шум)"""
+    paramsChanged = Signal()
 
     def __init__(self):
         super().__init__()
@@ -125,6 +712,8 @@ class ChannelParamsWidget(QWidget):
         layout.addWidget(group)
         layout.addStretch()
         self.setLayout(layout)
+        self.noise.stateChanged.connect(self.paramsChanged.emit)
+        self.ebn0.valueChanged.connect(self.paramsChanged.emit)
 
     def on_noise_mode_changed(self, index):
         """Переключение между режимами задания шума"""
@@ -142,6 +731,7 @@ class ChannelParamsWidget(QWidget):
 
 class SystemParamsWidget(QWidget):
     """Виджет для системных параметров"""
+    paramsChanged = Signal()
 
     def __init__(self):
         super().__init__()
@@ -163,7 +753,7 @@ class SystemParamsWidget(QWidget):
         # self.Fc.setSuffix(" Гц")
 
         self.bits_per_second = QDoubleSpinBox()
-        self.bits_per_second.setRange(10, 1000)
+        self.bits_per_second.setRange(1, 1000)
         self.bits_per_second.setValue(50)
         self.bits_per_second.setDecimals(0)
         # self.bits_per_second.setSuffix(" бит/с")
@@ -187,6 +777,12 @@ class SystemParamsWidget(QWidget):
         layout.addWidget(group)
         layout.addStretch()
         self.setLayout(layout)
+
+        # В конце __init__ метода SystemParamsWidget добавьте:
+        self.Fs.valueChanged.connect(self.paramsChanged.emit)
+        self.Fc.valueChanged.connect(self.paramsChanged.emit)
+        self.bits_per_second.valueChanged.connect(self.paramsChanged.emit)
+        self.T.valueChanged.connect(self.paramsChanged.emit)
 
 
 class FilterBandWidget(QWidget):
@@ -374,6 +970,7 @@ class FilterCombinedWidget(QWidget):
 
 class PLLParamsWidget(QWidget):
     """Виджет для параметров PLL (ФАПЧ)"""
+    paramsChanged = Signal()
 
     def __init__(self):
         super().__init__()
@@ -422,6 +1019,11 @@ class PLLParamsWidget(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
+        self.Gp.valueChanged.connect(self.paramsChanged.emit)
+        self.Sr.valueChanged.connect(self.paramsChanged.emit)
+        self.T_lf.valueChanged.connect(self.paramsChanged.emit)
+        self.delay_deg.valueChanged.connect(self.paramsChanged.emit)
+
 
 class Worker(QThread):
     finished = Signal(dict)
@@ -430,7 +1032,7 @@ class Worker(QThread):
                  filter_type, order_mode, filter_order,
                  Wp_low, Wp_high, Ws_low, Ws_high,
                  gpass, gstop, Gp, Sr, T_lf, delay_deg,
-                 noise_params):
+                 noise_params, carrier_only):
         super().__init__()
         self.T = T
         self.Fs = Fs
@@ -450,6 +1052,7 @@ class Worker(QThread):
         self.T_lf = T_lf
         self.delay_deg = delay_deg
         self.noise_params = noise_params
+        self.carrier_only = carrier_only
 
     def run(self):
         Ts = 1 / self.Fs
@@ -463,7 +1066,10 @@ class Worker(QThread):
         psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
         # === BPSK ===
-        signal_bpsk = np.cos(2 * np.pi * self.Fc * t + (psp + 1) / 2 * np.pi)
+        if self.carrier_only:
+            signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
+        else:
+            signal_bpsk = np.cos(2 * np.pi * self.Fc * t + (psp + 1) / 2 * np.pi)
 
         # === ШУМ ===
         if self.noise_params['add_noise']:
@@ -581,12 +1187,11 @@ class Worker(QThread):
             if idx < len(demodulated_signal):
                 recovered_raw[k] = 1 if demodulated_signal[idx] > 0 else -1
 
-        # 3. Выравнивание через корреляцию (компенсация задержки)
+        # 3. Выравнивание через корреляцию (ОСТАВИТЬ - это ВАЖНО!)
         psp_bits_full = bits[:nbits_total]
         corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
         shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
 
-        # Компенсируем сдвиг
         if shift > 0:
             recovered = recovered_raw[shift:]
             psp_bits = psp_bits_full[:len(recovered)]
@@ -597,7 +1202,7 @@ class Worker(QThread):
             recovered = recovered_raw
             psp_bits = psp_bits_full
 
-        # 4. Расчет BER
+        # 4. Расчет BER (БЕЗ автокомпенсации инверсии)
         if len(recovered) > 0 and len(psp_bits) > 0:
             min_len = min(len(recovered), len(psp_bits))
             recovered = recovered[:min_len]
@@ -632,14 +1237,13 @@ class Worker(QThread):
             "ber": ber
         })
 
-
 class WorkerPart2(QThread):
     finished = Signal(dict)
 
     def __init__(self, T, Fs, Fc, bits_per_second, noise_params,
                  filter_type, order_mode, filter_order,
                  Wp_low, Wp_high, Ws_low, Ws_high,
-                 gpass, gstop, Gp, Sr, T_lf, delay_deg):
+                 gpass, gstop, Gp, Sr, T_lf, delay_deg, carrier_only):
         super().__init__()
         self.T = T
         self.Fs = Fs
@@ -659,6 +1263,7 @@ class WorkerPart2(QThread):
         self.Sr = Sr
         self.T_lf = T_lf
         self.delay_deg = delay_deg
+        self.carrier_only = carrier_only
 
     def run(self):
         Ts = 1 / self.Fs
@@ -670,7 +1275,11 @@ class WorkerPart2(QThread):
         bits = np.where(bits == 0, -1, 1)
         psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
-        signal_bpsk = np.cos(2 * np.pi * self.Fc * t + (psp + 1) / 2 * np.pi)
+        # Напишите:
+        if self.carrier_only:
+            signal_bpsk = np.cos(2 * np.pi * self.Fc * t)  # Чистая несущая
+        else:
+            signal_bpsk = np.cos(2 * np.pi * self.Fc * t + (psp + 1) / 2 * np.pi)
 
         if self.noise_params['add_noise']:
             P = np.mean(signal_bpsk ** 2)
@@ -867,7 +1476,7 @@ class WorkerPart3(QThread):
                  filter_type, order_mode, filter_order,
                  Wp_low, Wp_high, Ws_low, Ws_high,
                  gpass, gstop, Gp, Sr, T_lf, delay_deg,
-                 noise_params, dphi):
+                 noise_params, dphi, carrier_only):
         super().__init__()
         self.T = T
         self.Fs = Fs
@@ -890,6 +1499,7 @@ class WorkerPart3(QThread):
         self.dphi = dphi
         self.last_VCO_out = None
         self.last_Fs = None
+        self.carrier_only = carrier_only
 
     def run(self):
         Ts = 1 / self.Fs
@@ -902,9 +1512,14 @@ class WorkerPart3(QThread):
         bits = np.where(bits == 0, -1, 1)
         psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
-        # === BPSK ===
+        # === BPSK С ФАЗОВОЙ РАССТРОЙКОЙ ===
         dphi_rad = self.dphi / 180
-        signal_bpsk = cospi(2 * self.Fc * t + (psp + 1) / 2 + dphi_rad)
+
+        if self.carrier_only:
+            signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
+        else:
+            # ВАЖНО: используем cospi и добавляем dphi_rad
+            signal_bpsk = cospi(2 * self.Fc * t + (psp + 1) / 2 + dphi_rad)
 
         # === ШУМ ===
         if self.noise_params['add_noise']:
@@ -921,7 +1536,7 @@ class WorkerPart3(QThread):
         else:
             noisy = signal_bpsk
 
-        # === ФИЛЬТР (используем параметры из глобальных) ===
+        # === ФИЛЬТР ===
         Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
         Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
 
@@ -958,7 +1573,7 @@ class WorkerPart3(QThread):
 
         filtered = signal.lfilter(b, a, noisy)
 
-        # === PLL (используем параметры из глобальных) ===
+        # === PLL ===
         Gp, Sr, T_lf = self.Gp, self.Sr, self.T_lf
         F_vco = self.Fc
         delay = np.deg2rad(self.delay_deg) / np.pi
@@ -1003,16 +1618,15 @@ class WorkerPart3(QThread):
         VCO_out = np.cos(2 * np.pi * self.Fc * t + phase_noise_out)
         VCO_out += 1e-4 * np.random.randn(len(t))
 
-        # Сохраняем для последующего расчёта СПМ
         self.last_VCO_out = VCO_out
         self.last_Fs = self.Fs
 
-        # ========== ИСПРАВЛЕННАЯ ДЕМОДУЛЯЦИЯ (как в части 2) ==========
+        # === ДЕМОДУЛЯЦИЯ ===
         demod_signal = lpf_cos[:-1] - lpf_sin[:-1]
 
         samples_per_bit = int(self.Fs / self.bits_per_second)
 
-        # 1. Timing recovery (поиск оптимального offset)
+        # 1. Timing recovery
         nbits_total = len(demod_signal) // samples_per_bit
 
         best_offset = 0
@@ -1027,19 +1641,18 @@ class WorkerPart3(QThread):
                 best_metric = metric
                 best_offset = offset
 
-        # 2. Декодирование с найденным offset
+        # 2. Декодирование
         recovered_raw = np.zeros(nbits_total)
         for k in range(nbits_total):
             idx = best_offset + k * samples_per_bit
             if idx < len(demod_signal):
                 recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
 
-        # 3. Выравнивание через корреляцию (компенсация задержки)
+        # 3. Выравнивание через корреляцию
         psp_bits_full = bits[:nbits_total]
         corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
         shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
 
-        # Компенсируем сдвиг
         if shift > 0:
             recovered = recovered_raw[shift:]
             psp_bits = psp_bits_full[:len(recovered)]
@@ -1051,20 +1664,13 @@ class WorkerPart3(QThread):
             recovered = recovered_raw
             psp_bits = psp_bits_full
 
-        # 4. Проверка на инверсию (для Δφ = 180°)
+        # ========== УБРАЛ АВТОКОМПЕНСАЦИЮ ИНВЕРСИИ ==========
+        # 4. Расчет BER (БЕЗ проверки на инверсию)
         if len(recovered) > 0 and len(psp_bits) > 0:
             min_len = min(len(recovered), len(psp_bits))
-            rec_check = recovered[:min_len]
-            psp_check = psp_bits[:min_len]
-            errors_normal = np.sum(rec_check != psp_check)
-            errors_inv = np.sum(rec_check != -psp_check)
-
-            if errors_inv < errors_normal:
-                recovered = -recovered
-                errors = errors_inv
-            else:
-                errors = errors_normal
-
+            recovered = recovered[:min_len]
+            psp_bits = psp_bits[:min_len]
+            errors = np.sum(recovered != psp_bits)
             ber = errors / min_len if min_len > 0 else 1.0
         else:
             errors = 0
@@ -1073,7 +1679,6 @@ class WorkerPart3(QThread):
         # Время для восстановленной ПСП
         t_rec = np.arange(len(psp_bits)) / self.bits_per_second
 
-        # Отправляем результаты
         self.finished.emit({
             "t": t,
             "errors": errors,
@@ -1132,7 +1737,7 @@ class WorkerPart4(QThread):
                  filter_type, order_mode, filter_order,
                  Wp_low, Wp_high, Ws_low, Ws_high,
                  gpass, gstop, Gp, Sr, T_lf, delay_deg,
-                 noise_params, freq_offset):
+                 noise_params, freq_offset, carrier_only):
         super().__init__()
         self.T = T
         self.Fs = Fs
@@ -1155,6 +1760,7 @@ class WorkerPart4(QThread):
         self.freq_offset = freq_offset
         self.last_VCO_out = None
         self.last_Fs = None
+        self.carrier_only = carrier_only
 
     def run(self):
         Ts = 1 / self.Fs
@@ -1167,8 +1773,11 @@ class WorkerPart4(QThread):
         bits = np.where(bits == 0, -1, 1)
         psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
-        # BPSK с частотной расстройкой
-        signal_bpsk = cospi(2 * (self.Fc + self.freq_offset) * t + (psp + 1) / 2)
+        # ========== ИСПРАВЛЕНО: BPSK с частотной расстройкой ==========
+        if self.carrier_only:
+            signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
+        else:
+            signal_bpsk = cospi(2 * (self.Fc + self.freq_offset) * t + (psp + 1) / 2)
 
         # шум
         if self.noise_params['add_noise']:
@@ -1271,12 +1880,78 @@ class WorkerPart4(QThread):
         self.last_VCO_out = VCO_out
         self.last_Fs = self.Fs
 
-        # Отправляем основные сигналы (без СПМ)
+        # ========== ПРАВИЛЬНАЯ ДЕМОДУЛЯЦИЯ (как в части 3) ==========
+        demod_signal = lpf_cos[:-1] - lpf_sin[:-1]
+
+        samples_per_bit = int(self.Fs / self.bits_per_second)
+
+        # 1. Timing recovery (поиск оптимального offset)
+        nbits_total = len(demod_signal) // samples_per_bit
+
+        best_offset = 0
+        best_metric = -np.inf
+        for offset in range(samples_per_bit):
+            metric = 0
+            for k in range(nbits_total):
+                idx = offset + k * samples_per_bit
+                if idx < len(demod_signal):
+                    metric += abs(demod_signal[idx])
+            if metric > best_metric:
+                best_metric = metric
+                best_offset = offset
+
+        # 2. Декодирование с найденным offset
+        recovered_raw = np.zeros(nbits_total)
+        for k in range(nbits_total):
+            idx = best_offset + k * samples_per_bit
+            if idx < len(demod_signal):
+                recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
+
+        # 3. Выравнивание через корреляцию (компенсация задержки)
+        psp_bits_full = bits[:nbits_total]
+        corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+        shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+
+        # Компенсируем сдвиг
+        if shift > 0:
+            recovered = recovered_raw[shift:]
+            psp_bits = psp_bits_full[:len(recovered)]
+        elif shift < 0:
+            shift_abs = -shift
+            recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
+            psp_bits = psp_bits_full[shift_abs:]
+        else:
+            recovered = recovered_raw
+            psp_bits = psp_bits_full
+
+        # 4. Прямое сравнение БЕЗ компенсации инверсии (как в реальной системе)
+        if len(recovered) > 0 and len(psp_bits) > 0:
+            min_len = min(len(recovered), len(psp_bits))
+            rec_check = recovered[:min_len]
+            psp_check = psp_bits[:min_len]
+
+            # Реальная система: просто сравниваем, что получили
+            errors = np.sum(rec_check != psp_check)
+            ber = errors / min_len if min_len > 0 else 1.0
+        else:
+            errors = 0
+            ber = 1.0
+
+        # Время для восстановленной ПСП
+        t_rec = np.arange(len(psp_bits)) / self.bits_per_second
+
+        # Отправляем основные сигналы
         self.finished.emit({
             "t": t,
+            "psp": psp,
             "phase": phase,
             "lpf_cos": lpf_cos[:-1],
             "lpf_sin": lpf_sin[:-1],
+            "t_rec": t_rec,
+            "rec": recovered,
+            "psp_bits": psp_bits,
+            "errors": errors,
+            "ber": ber
         })
 
 
@@ -1355,17 +2030,24 @@ class WorkerPart5(QThread):
 
 
 class PlotTab(QWidget):
-    # def __init__(self, title, xlabel="Время, [с]", ylabel="Амплитуда", subplots=1):
     def __init__(self, title, xlabel="Время, с", ylabel="", subplots=1):
         super().__init__()
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
-        self.toolbar = NavigationToolbar(self.canvas, self)
+        # Устанавливаем политику размера, чтобы canvas растягивался
+        self.canvas.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        # Устанавливаем фиксированную высоту тулбара
+        self.toolbar.setFixedHeight(35)
+
+        # Добавляем виджеты - canvas будет растягиваться, toolbar имеет фиксированную высоту
+        layout.addWidget(self.canvas, stretch=1)  # stretch=1 - будет занимать всё свободное место
         layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas)
         self.setLayout(layout)
 
         self.title = title
@@ -1472,6 +2154,7 @@ class GlobalParamsWidget(QWidget):
         self.system_params = SystemParamsWidget()
         self.params_tabs.addTab(self.system_params, "Системные")
 
+
         # Параметры канала
         self.channel_params = ChannelParamsWidget()
         self.params_tabs.addTab(self.channel_params, "Канал")
@@ -1484,8 +2167,36 @@ class GlobalParamsWidget(QWidget):
         self.pll_params = PLLParamsWidget()
         self.params_tabs.addTab(self.pll_params, "СВН")
 
+        # ДОБАВИТЬ НОВЫЙ ВИДЖЕТ - Режим несущей
+        self.carrier_widget = QWidget()
+        carrier_layout = QVBoxLayout()
+        self.carrier_only = QCheckBox("Только несущая (без модуляции)")
+        self.carrier_only.setToolTip("При включении передается чистая несущая, ПСП игнорируется")
+        self.carrier_only.setStyleSheet("QCheckBox { font-size: 14px; font-weight: bold; color: #2196F3; }")
+        carrier_layout.addWidget(self.carrier_only)
+        carrier_layout.addStretch()
+        self.carrier_widget.setLayout(carrier_layout)
+        self.params_tabs.addTab(self.carrier_widget, "Режим несущей")
+
+        # НОВАЯ ВКЛАДКА - Диапазоны параметров
+        self.ranges_table = RangesTableWidget(self)  # Передаем self как parent
+        self.params_tabs.addTab(self.ranges_table, "📊 Диапазоны параметров")
+
         layout.addWidget(self.params_tabs)
         self.setLayout(layout)
+
+        self.system_params.paramsChanged.connect(self.on_params_changed)
+        self.channel_params.paramsChanged.connect(self.on_params_changed)
+        self.pll_params.paramsChanged.connect(self.on_params_changed)
+
+    def is_carrier_only(self):
+        """Возвращает True если выбран режим только несущей"""
+        return self.carrier_only.isChecked()
+
+    def on_params_changed(self):
+        """Автоматически обновляет таблицу при изменении параметров"""
+        if hasattr(self, 'ranges_table'):
+            self.ranges_table.refresh_ranges()
 
     def get_system_params(self):
         return {
@@ -1551,12 +2262,12 @@ class MainWindow(QMainWindow):
         self.tab_spec1 = PlotTab("СПМ процесса на выходе канала", "Частота, Гц", "")
         self.tab_filtered = PlotTab("Процесс на выходе ПФ", "Время, с", "")
         self.tab_spec2 = PlotTab("СПМ процесса на выходе ПФ", "Частота, Гц", "")
-        self.tab_out = PlotTab("ПСП на выходе демодулятора", "Время, с", "")
+        self.tab_out = PlotTabWithCheckbox("ПСП на выходе демодулятора", "Время, с", "")
         self.tab_compare = PlotTab("Сравнение ПСП", "Время, с", "", subplots=2)
 
         self.graphs_tabs.addTab(self.tab_psp, "ПСП")
         self.graphs_tabs.addTab(self.tab_bpsk, "2ФМ сигнал")
-        self.graphs_tabs.addTab(self.tab_noisy, "Процессb на выходе канала")
+        self.graphs_tabs.addTab(self.tab_noisy, "Процесс на выходе канала")
         self.graphs_tabs.addTab(self.tab_spec1, "СПМ процесса на выходе канала")
         self.graphs_tabs.addTab(self.tab_filtered, "Процесс на выходе ПФ")
         self.graphs_tabs.addTab(self.tab_spec2, "СПМ процесса на выходе ПФ")
@@ -1582,6 +2293,21 @@ class MainWindow(QMainWindow):
         self.btn_overlay1.setMinimumHeight(40)
         self.btn_overlay1.setStyleSheet("font-size: 14px; font-weight: bold; background-color: #FF9800; color: white;")
         self.btn_overlay1.clicked.connect(lambda: self._show_overlay_dialog(1, self._get_part1_graphs()))
+
+        # В разделе части 1, после кнопки btn_overlay1, добавьте:
+
+        self.btn_test_phase = QPushButton("🔬 Тест чувствительности к фазе")
+        self.btn_test_phase.setMinimumHeight(40)
+        self.btn_test_phase.setStyleSheet("""
+            font-size: 14px; 
+            font-weight: bold; 
+            background-color: #9C27B0; 
+            color: white;
+            border-radius: 6px;
+        """)
+        self.btn_test_phase.clicked.connect(self.test_part1_phase_sensitivity)
+
+        button_layout.addWidget(self.btn_test_phase)
 
         # Добавляем кнопки в горизонтальный layout
         button_layout.addWidget(self.btn_part1)
@@ -1638,7 +2364,7 @@ class MainWindow(QMainWindow):
         #     subplots=2
         # )
         # НОВАЯ ВКЛАДКА - ПСП на выходе демодулятора (точки)
-        self.tab_demod_out2 = PlotTab("ПСП на выходе демодулятора", "Время, с", "")
+        self.tab_demod_out2 = PlotTabWithCheckbox("ПСП на выходе демодулятора", "Время, с", "")
         self.tabs2.addTab(self.tab_mul_sin, "Выход перемножителя (Синф.)")
         self.tabs2.addTab(self.tab_mul_cos, "Выход перемножителя (Кв.)")
         self.tabs2.addTab(self.tab_spec_mul, "СПМ процесса на выходе перемножителей")
@@ -1682,13 +2408,13 @@ class MainWindow(QMainWindow):
         button_widget.setLayout(button_layout)
 
         # Информация об ошибках
-        # self.label_errors2 = QLabel("Ошибки: 0 | BER: 0")
-        # self.label_errors2.setStyleSheet("font-size: 14px; font-weight: bold; color: blue;")
-        # self.label_errors2.setAlignment(Qt.AlignCenter)
+        self.label_errors2 = QLabel("Ошибки: 0 | BER: 0")
+        self.label_errors2.setStyleSheet("font-size: 14px; font-weight: bold; color: blue;")
+        self.label_errors2.setAlignment(Qt.AlignCenter)
 
         part2_layout.addWidget(graphs2)
         part2_layout.addWidget(button_widget)
-        # part2_layout.addWidget(self.label_errors2)
+        part2_layout.addWidget(self.label_errors2)
         part2_widget.setLayout(part2_layout)
 
         self.main_tabs.addTab(part2_widget, "Часть 2 (Анализ СВН)")
@@ -1712,8 +2438,8 @@ class MainWindow(QMainWindow):
         self.tab_psp3 = PlotTab("ПСП (входная)", "Время, с", "")
         self.tabs3.addTab(self.tab_psp3, "ПСП входная")
 
-        self.tab_demod_out3 = PlotTab("ПСП на выходе демодулятора", "Время, с", "")
-        self.tabs3.addTab(self.tab_demod_out3, "ПСП на выходе демодулятора")
+        self.tab_demod_out3 = PlotTabWithCheckbox("ПСП на выходе демодулятора", "Время, с", "")
+
 
         # Вкладка с двумя графиками ФНЧ (один под другим)
         self.tab_lpf_combined = PlotTab(
@@ -1729,7 +2455,9 @@ class MainWindow(QMainWindow):
 
         self.tabs3.addTab(self.tab_lpf_combined, "Выход ФНЧ (Синф. и Кв.)")
         self.tabs3.addTab(self.tab_phase3, "Реализация на выходе ФД")
+        self.tabs3.addTab(self.tab_demod_out3, "ПСП на выходе демодулятора")
         self.tabs3.addTab(self.tab_vco_spec, "СПМ на выходе ГУН (без переходного процесса)")
+
 
         g3_layout.addWidget(self.tabs3)
         graphs3.setLayout(g3_layout)
@@ -1746,10 +2474,10 @@ class MainWindow(QMainWindow):
         control3_layout = QHBoxLayout()
 
         self.dphi = QDoubleSpinBox()
-        self.dphi.setRange(-180, 180)
+        self.dphi.setRange(-360, 360)  # Расширен диапазон
         self.dphi.setValue(0)
         self.dphi.setFixedWidth(100)
-        self.dphi.setDecimals(0)
+        self.dphi.setSingleStep(1)  # Шаг 1 градус
 
         self.btn3 = QPushButton("Запуск расчёта")
         self.btn3.setFixedWidth(170)  # Такой же как у btn_psd
@@ -1796,25 +2524,6 @@ class MainWindow(QMainWindow):
         self.btn_overlay3.clicked.connect(lambda: self._show_overlay_dialog(3, self._get_part3_graphs()))
         control3_layout.addWidget(self.btn_overlay3)
 
-        # Кнопка сканирования фазы
-        self.btn_scan_phase = QPushButton("🔬 Сканировать BER по фазе")
-        self.btn_scan_phase.setFixedWidth(220)
-        self.btn_scan_phase.setMinimumHeight(30)
-        self.btn_scan_phase.setStyleSheet(
-            "font-size: 14px; font-weight: bold; background-color: #9C27B0; color: white; border-radius: 6px;")
-        self.btn_scan_phase.clicked.connect(self.run_ber_vs_phase_scan)
-
-        # Кнопка многократных измерений
-        self.btn_multirun = QPushButton("📊 Многократные измерения")
-        self.btn_multirun.setFixedWidth(220)
-        self.btn_multirun.setMinimumHeight(30)
-        self.btn_multirun.setStyleSheet(
-            "font-size: 14px; font-weight: bold; background-color: #009688; color: white; border-radius: 6px;")
-        self.btn_multirun.clicked.connect(lambda: self.run_multiple_ber_measurements(10, 30))
-
-        # Добавляем в control3_layout
-        control3_layout.addWidget(self.btn_scan_phase)
-        control3_layout.addWidget(self.btn_multirun)
 
         part3_layout.addWidget(scroll_area, stretch=1)
         part3_layout.addWidget(control3_widget)
@@ -1837,6 +2546,13 @@ class MainWindow(QMainWindow):
 
         self.tabs4 = QTabWidget()
 
+        # НОВЫЕ ВКЛАДКИ ДЛЯ ЧАСТИ 4
+        self.tab_psp4 = PlotTab("ПСП (входная)", "Время, с", "")
+        self.tabs4.addTab(self.tab_psp4, "ПСП входная")
+
+        self.tab_demod_out4 = PlotTabWithCheckbox("ПСП на выходе демодулятора", "Время, с", "")
+
+
         # Вкладка с двумя графиками ФНЧ (один под другим)
         self.tab4_lpf_combined = PlotTab(
             title="Реализация на выходе ФНЧ",
@@ -1851,7 +2567,9 @@ class MainWindow(QMainWindow):
 
         self.tabs4.addTab(self.tab4_lpf_combined, "Выход ФНЧ (Синф. и Кв.)")
         self.tabs4.addTab(self.tab4_phase, "Реализация на выходе ФД")
+        self.tabs4.addTab(self.tab_demod_out4, "ПСП на выходе демодулятора")
         self.tabs4.addTab(self.tab4_spec, "СПМ на выходе ГУН (без переходного процесса)")
+
 
         g4_layout.addWidget(self.tabs4)
         graphs4.setLayout(g4_layout)
@@ -1859,7 +2577,7 @@ class MainWindow(QMainWindow):
 
         # Панель управления
         control4_widget = QWidget()
-        control4_widget.setFixedHeight(50)
+        control4_widget.setFixedHeight(80)
         control4_layout = QHBoxLayout()
 
         self.freq_offset = QDoubleSpinBox()
@@ -1884,6 +2602,12 @@ class MainWindow(QMainWindow):
         self.btn_psd4.clicked.connect(self.compute_psd_only4)
         self.btn_psd4.setEnabled(False)
 
+        # НОВЫЙ ВИДЖЕТ ДЛЯ ОТОБРАЖЕНИЯ BER
+        self.label_ber4 = QLabel("Ошибки: -- | BER: --")
+        self.label_ber4.setStyleSheet(
+            "font-size: 14px; font-weight: bold; color: blue; background-color: #f0f0f0; padding: 5px; border-radius: 5px;")
+        self.label_ber4.setFixedWidth(250)
+
         control4_layout.addWidget(QLabel("Δf, Гц:"))
         control4_layout.addWidget(self.freq_offset)
         control4_layout.addSpacing(20)
@@ -1893,9 +2617,10 @@ class MainWindow(QMainWindow):
         control4_layout.addWidget(self.transition4)
         control4_layout.addSpacing(10)
         control4_layout.addWidget(self.btn_psd4)
-
+        control4_layout.addWidget(self.label_ber4)  # ДОБАВЛЕНО
         control4_widget.setLayout(control4_layout)
         control4_layout.addSpacing(280)
+
         # Кнопка наложения графиков - такой же размер как у btn_psd4
         self.btn_overlay4 = QPushButton("📊 Наложить графики")
         self.btn_overlay4.setFixedWidth(180)  # Такой же как у btn_psd4
@@ -1905,6 +2630,26 @@ class MainWindow(QMainWindow):
         self.btn_overlay4.clicked.connect(lambda: self._show_overlay_dialog(4, self._get_part4_graphs()))
 
         control4_layout.addWidget(self.btn_overlay4)
+
+        # Кнопка сканирования частоты
+        self.btn_scan_freq = QPushButton("🔬 Сканировать BER по частоте")
+        self.btn_scan_freq.setFixedWidth(220)
+        self.btn_scan_freq.setMinimumHeight(30)
+        self.btn_scan_freq.setStyleSheet(
+            "font-size: 14px; font-weight: bold; background-color: #9C27B0; color: white; border-radius: 6px;")
+        self.btn_scan_freq.clicked.connect(self.run_ber_vs_freq_scan)
+
+        # Кнопка многократных измерений
+        self.btn_multirun_freq = QPushButton("📊 Многократные измерения")
+        self.btn_multirun_freq.setFixedWidth(220)
+        self.btn_multirun_freq.setMinimumHeight(30)
+        self.btn_multirun_freq.setStyleSheet(
+            "font-size: 14px; font-weight: bold; background-color: #009688; color: white; border-radius: 6px;")
+        self.btn_multirun_freq.clicked.connect(lambda: self.run_multiple_freq_measurements(10, 25))
+
+        # Добавляем в control4_layout (перед btn_overlay4)
+        control4_layout.addWidget(self.btn_scan_freq)
+        control4_layout.addWidget(self.btn_multirun_freq)
 
         part4_layout.addWidget(scroll_area4, stretch=1)
         part4_layout.addWidget(control4_widget)
@@ -1924,18 +2669,18 @@ class MainWindow(QMainWindow):
         form5 = QFormLayout()
 
         self.phase_min = QDoubleSpinBox()
-        self.phase_min.setValue(-180)
-        self.phase_min.setRange(-360, 360)
+        self.phase_min.setValue(-540)
+        self.phase_min.setRange(-1080, 1080)
         self.phase_min.setDecimals(0)
 
         self.phase_max = QDoubleSpinBox()
-        self.phase_max.setValue(180)
-        self.phase_max.setRange(-360, 360)
+        self.phase_max.setValue(540)
+        self.phase_max.setRange(-1080, 1080)
         self.phase_max.setDecimals(0)
 
         self.phase_step = QDoubleSpinBox()
-        self.phase_step.setValue(5)
-        self.phase_step.setRange(0.1, 90)
+        self.phase_step.setValue(10)
+        self.phase_step.setRange(0.1, 180)
         self.phase_step.setDecimals(0)
 
         self.btn5 = QPushButton("Построить ДХ")
@@ -1982,316 +2727,6 @@ class MainWindow(QMainWindow):
         main_widget.setLayout(main_layout)
         self.setCentralWidget(main_widget)
 
-    def run_ber_vs_phase_scan(self):
-        """Автоматический прогон для разных значений Δφ с измерением BER"""
-
-        # Создаем диалоговое окно с прогрессом
-        progress_dialog = QProgressDialog("Выполняется сканирование фазы...", "Отмена", 0, 100, self)
-        progress_dialog.setWindowTitle("Анализ BER от Δφ")
-        progress_dialog.setWindowModality(Qt.WindowModal)
-        progress_dialog.setMinimumDuration(0)
-
-        # Параметры сканирования
-        phase_values = np.arange(-180, 181, 30)  # от -180 до 180 с шагом 30°
-        # phase_values = np.arange(-180, 181, 15)  # можно увеличить точность (шаг 15°)
-
-        ber_results = []
-        error_results = []
-
-        # Получаем текущие параметры из глобальных настроек
-        sys_params = self.global_params.get_system_params()
-        noise_params = self.global_params.get_noise_params()
-        filter_params = self.global_params.get_filter_params()
-        pll_params = self.global_params.get_pll_params()
-
-        # Сохраняем текущее значение Δφ
-        original_dphi = self.dphi.value()
-
-        total = len(phase_values)
-
-        for idx, dphi in enumerate(phase_values):
-            # Обновляем прогресс
-            progress_dialog.setValue(int((idx + 1) / total * 100))
-            progress_dialog.setLabelText(f"Измерение BER для Δφ = {dphi}°...")
-
-            if progress_dialog.wasCanceled():
-                break
-
-            # Устанавливаем значение фазы
-            self.dphi.setValue(dphi)
-
-            # Создаем и запускаем воркер
-            worker = WorkerPart3(
-                T=sys_params['T'],
-                Fs=sys_params['Fs'],
-                Fc=sys_params['Fc'],
-                bits_per_second=sys_params['bits_per_second'],
-                filter_type=filter_params['type'],
-                order_mode=filter_params['order_mode'],
-                filter_order=filter_params['order'],
-                Wp_low=filter_params['Wp_low'],
-                Wp_high=filter_params['Wp_high'],
-                Ws_low=filter_params['Ws_low'],
-                Ws_high=filter_params['Ws_high'],
-                gpass=filter_params['gpass'],
-                gstop=filter_params['gstop'],
-                Gp=pll_params['Gp'],
-                Sr=pll_params['Sr'],
-                T_lf=pll_params['T_lf'],
-                delay_deg=pll_params['delay_deg'],
-                noise_params=noise_params,
-                dphi=dphi
-            )
-
-            # Используем событие для синхронного ожидания
-            result_container = {}
-            event = QtCore.QEventLoop()
-
-            def on_finished(data):
-                result_container['data'] = data
-                event.quit()
-
-            worker.finished.connect(on_finished)
-            worker.start()
-            event.exec()
-
-            if 'data' in result_container:
-                data = result_container['data']
-                ber_results.append(data['ber'])
-                error_results.append(data['errors'])
-            else:
-                ber_results.append(1.0)
-                error_results.append(0)
-
-            # Даем немного времени на обновление GUI
-            QApplication.processEvents()
-
-        # Восстанавливаем исходное значение Δφ
-        self.dphi.setValue(original_dphi)
-        progress_dialog.close()
-
-        # Строим график результатов
-        self.plot_ber_vs_phase(phase_values[:len(ber_results)], ber_results, error_results)
-
-    def plot_ber_vs_phase(self, phase_values, ber_results, error_results):
-        """Строит график зависимости BER от фазового рассогласования"""
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Зависимость BER от фазового рассогласования Δφ")
-        dialog.resize(800, 600)
-
-        layout = QVBoxLayout(dialog)
-
-        # Создаем фигуру с двумя подграфиками
-        figure = Figure(figsize=(10, 8))
-        canvas = FigureCanvas(figure)
-        toolbar = NavigationToolbar(canvas, dialog)
-
-        ax1 = figure.add_subplot(211)
-        ax2 = figure.add_subplot(212)
-
-        # График BER
-        ax1.semilogy(phase_values, ber_results, 'bo-', linewidth=2, markersize=8, label='BER')
-        ax1.set_xlabel("Фазовое рассогласование Δφ, град.")
-        ax1.set_ylabel("Bit Error Rate (BER)")
-        ax1.set_title("Зависимость BER от фазового рассогласования")
-        ax1.grid(True, alpha=0.3)
-        ax1.set_ylim([1e-6, 1])
-        ax1.legend()
-
-        # Добавляем отметки для особых точек
-        for i, (phase, ber) in enumerate(zip(phase_values, ber_results)):
-            if ber == 0:
-                ax1.annotate(f'BER=0', (phase, 1e-6),
-                             xytext=(phase, 1e-5),
-                             arrowprops=dict(arrowstyle='->', color='green'),
-                             fontsize=9, ha='center', color='green')
-
-        # График количества ошибок
-        ax2.bar(phase_values, error_results, width=15, color='red', alpha=0.7, label='Ошибки')
-        ax2.set_xlabel("Фазовое рассогласование Δφ, град.")
-        ax2.set_ylabel("Количество ошибок")
-        ax2.set_title("Количество ошибочных бит")
-        ax2.grid(True, alpha=0.3)
-        ax2.legend()
-
-        figure.tight_layout()
-
-        layout.addWidget(toolbar)
-        layout.addWidget(canvas)
-
-        # Кнопка закрытия
-        btn_close = QPushButton("Закрыть")
-        btn_close.clicked.connect(dialog.accept)
-        layout.addWidget(btn_close)
-
-        # Добавляем информационную панель
-        info_text = QTextEdit()
-        info_text.setMaximumHeight(150)
-        info_text.setReadOnly(True)
-
-        info = "Результаты измерения BER:\n"
-        info += "=" * 50 + "\n"
-        info += f"{'Δφ, °':<10} {'BER':<12} {'Ошибки':<10}\n"
-        info += "-" * 50 + "\n"
-
-        for phase, ber, errors in zip(phase_values, ber_results, error_results):
-            if ber == 0:
-                ber_str = "0 (идеально)"
-            elif ber < 0.001:
-                ber_str = f"{ber:.2e}"
-            else:
-                ber_str = f"{ber:.6f}"
-            info += f"{phase:<10} {ber_str:<12} {errors:<10}\n"
-
-        # Добавляем анализ
-        info += "\n" + "=" * 50 + "\n"
-        info += "Анализ результатов:\n"
-
-        zero_ber_phases = [phase for phase, ber in zip(phase_values, ber_results) if ber == 0]
-        if zero_ber_phases:
-            info += f"✓ Идеальное восстановление (BER=0) при Δφ = {zero_ber_phases}\n"
-
-        max_ber_idx = np.argmax(ber_results)
-        info += f"✗ Максимальный BER при Δφ = {phase_values[max_ber_idx]}° (BER = {ber_results[max_ber_idx]:.6f})\n"
-
-        # Проверка на инверсию
-        for phase, ber in zip(phase_values, ber_results):
-            if ber > 0.9 and phase != 0:
-                info += f"⚠ Возможна инверсия битов при Δφ = {phase}° (BER ≈ {ber:.3f})\n"
-
-        info_text.setText(info)
-        layout.addWidget(info_text)
-
-        dialog.exec()
-
-    def run_multiple_ber_measurements(self, num_runs=10, phase_step=30):
-        """Запускает несколько измерений для усреднения BER (для статистической точности)"""
-
-        # Создаем диалог с параметрами
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Многократные измерения BER")
-        dialog.setModal(True)
-        dialog.resize(400, 250)
-
-        layout = QVBoxLayout(dialog)
-
-        form_layout = QFormLayout()
-
-        num_runs_spin = QSpinBox()
-        num_runs_spin.setRange(1, 100)
-        num_runs_spin.setValue(num_runs)
-        num_runs_spin.setSuffix(" запусков")
-
-        phase_step_spin = QSpinBox()
-        phase_step_spin.setRange(15, 90)
-        phase_step_spin.setValue(phase_step)
-        phase_step_spin.setSuffix("°")
-        phase_step_spin.setSingleStep(15)
-
-        form_layout.addRow("Количество измерений для каждой фазы:", num_runs_spin)
-        form_layout.addRow("Шаг по фазе:", phase_step_spin)
-
-        layout.addLayout(form_layout)
-
-        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btn_box.accepted.connect(dialog.accept)
-        btn_box.rejected.connect(dialog.reject)
-        layout.addWidget(btn_box)
-
-        if dialog.exec() != QDialog.Accepted:
-            return
-
-        num_runs = num_runs_spin.value()
-        phase_step = phase_step_spin.value()
-
-        # Параметры сканирования
-        phase_values = np.arange(-180, 181, phase_step)
-
-        # Массивы для усредненных результатов
-        avg_ber = np.zeros(len(phase_values))
-        avg_errors = np.zeros(len(phase_values))
-
-        # Прогресс бар
-        progress = QProgressDialog(f"Выполняется {num_runs} измерений для каждой фазы...", "Отмена", 0,
-                                   len(phase_values) * num_runs, self)
-        progress.setWindowTitle("Многократные измерения BER")
-        progress.setWindowModality(Qt.WindowModal)
-        progress.setMinimumDuration(0)
-
-        # Получаем параметры
-        sys_params = self.global_params.get_system_params()
-        noise_params = self.global_params.get_noise_params()
-        filter_params = self.global_params.get_filter_params()
-        pll_params = self.global_params.get_pll_params()
-
-        original_dphi = self.dphi.value()
-        current_run = 0
-
-        for p_idx, dphi in enumerate(phase_values):
-            ber_sum = 0
-            errors_sum = 0
-
-            for run in range(num_runs):
-                progress.setValue(current_run)
-                progress.setLabelText(f"Δφ = {dphi}°, измерение {run + 1}/{num_runs}...")
-
-                if progress.wasCanceled():
-                    break
-
-                # Создаем и запускаем воркер
-                worker = WorkerPart3(
-                    T=sys_params['T'],
-                    Fs=sys_params['Fs'],
-                    Fc=sys_params['Fc'],
-                    bits_per_second=sys_params['bits_per_second'],
-                    filter_type=filter_params['type'],
-                    order_mode=filter_params['order_mode'],
-                    filter_order=filter_params['order'],
-                    Wp_low=filter_params['Wp_low'],
-                    Wp_high=filter_params['Wp_high'],
-                    Ws_low=filter_params['Ws_low'],
-                    Ws_high=filter_params['Ws_high'],
-                    gpass=filter_params['gpass'],
-                    gstop=filter_params['gstop'],
-                    Gp=pll_params['Gp'],
-                    Sr=pll_params['Sr'],
-                    T_lf=pll_params['T_lf'],
-                    delay_deg=pll_params['delay_deg'],
-                    noise_params=noise_params,
-                    dphi=dphi
-                )
-
-                result_container = {}
-                event = QtCore.QEventLoop()
-
-                def on_finished(data):
-                    result_container['data'] = data
-                    event.quit()
-
-                worker.finished.connect(on_finished)
-                worker.start()
-                event.exec()
-
-                if 'data' in result_container:
-                    data = result_container['data']
-                    ber_sum += data['ber']
-                    errors_sum += data['errors']
-
-                current_run += 1
-                QApplication.processEvents()
-
-            if progress.wasCanceled():
-                break
-
-            avg_ber[p_idx] = ber_sum / num_runs
-            avg_errors[p_idx] = errors_sum / num_runs
-
-        progress.close()
-        self.dphi.setValue(original_dphi)
-
-        # Строим график усредненных результатов
-        self.plot_ber_vs_phase(phase_values[:len(avg_ber)], avg_ber, avg_errors)
 
     def _get_part1_graphs(self):
         return [
@@ -2310,7 +2745,7 @@ class MainWindow(QMainWindow):
             ("СПМ на выходе ПФ", lambda: ("СПМ на выходе ПФ", self.last_part1_data["f2"], 10 * np.log10(
                 np.where(self.last_part1_data["pxx2"] <= 0, 1e-12, self.last_part1_data["pxx2"])), "line",
                                           "Частота, Гц", "дБ")),
-            ("ПСП на выходе демодулятора (отсчеты)",
+            ("ПСП на выходе демодулятора",
              lambda: ("ПСП на выходе демодулятора", self.last_part1_data["t_rec"], self.last_part1_data["rec"],
                       "scatter",
                       "Время, с", "")),
@@ -2321,7 +2756,7 @@ class MainWindow(QMainWindow):
 
     def _get_part2_graphs(self):
         return [
-            ("ПСП (исходная)",
+            ("ПСП",
              lambda: ("ПСП", self.last_part2_data["t"], self.last_part2_data["psp"], "line", "Время, с", "")),
             ("Реализация на выходе ФД",
              lambda: ("Реализация на выходе ФД", self.last_part2_data["t"], self.last_part2_data["phase"], "line",
@@ -2361,21 +2796,19 @@ class MainWindow(QMainWindow):
             # ("Входная ПСП (часть 2)",
             #  lambda: ("Входная ПСП", self.last_part2_data["t_rec"], self.last_part2_data["psp_bits"], "step",
             #           "Время, с", "")),
-            ("Восстановленная ПСП (отсчеты)",
-             lambda: ("Восстановленная ПСП", self.last_part2_data["t_rec"], self.last_part2_data["rec"], "scatter",
+            ("ПСП на выходе демодулятора",
+             lambda: ("ПСП на выходе демодулятора", self.last_part2_data["t_rec"], self.last_part2_data["rec"], "scatter",
                       "Время, с", "")),
         ]
 
     def _get_part3_graphs(self):
         return [
-            ("ПСП (входная)",
-             lambda: ("ПСП входная", self.last_part3_data["t"], self.last_part3_data["psp"], "line", "Время, с", "")),
-            ("ПСП на выходе демодулятора (отсчеты)",
-             lambda: ("ПСП выходная", self.last_part3_data["t_rec"], self.last_part3_data["rec"], "scatter", "Время, с",
-                      "")),
-            ("ПСП на выходе демодулятора (импульсы)",
-             lambda: ("ПСП выходная", self.last_part3_data["t_rec"], self.last_part3_data["rec"], "step", "Время, с",
-                      "")),
+            ("ПСП",
+             lambda: ("ПСП", self.last_part3_data["t"], self.last_part3_data["psp"], "line", "Время, с", "")),
+
+            # ("ПСП на выходе демодулятора (импульсы)",
+            #  lambda: ("ПСП выходная", self.last_part3_data["t_rec"], self.last_part3_data["rec"], "step", "Время, с",
+            #           "")),
             ("Выход ФНЧ (Синф.)",
              lambda: ("Выход ФНЧ (Синф.)", self.last_part3_data["t"], self.last_part3_data["lpf_sin"], "line",
                       "Время, с", "")),
@@ -2385,10 +2818,19 @@ class MainWindow(QMainWindow):
             ("Реализация на выходе ФД",
              lambda: ("Реализация на выходе ФД", self.last_part3_data["t"], self.last_part3_data["phase"], "line",
                       "Время, с", "")),
+            ("ПСП на выходе демодулятора",
+             lambda: ("ПСП на выходе демодулятора", self.last_part3_data["t_rec"], self.last_part3_data["rec"], "scatter", "Время, с",
+                      "")),
         ]
 
     def _get_part4_graphs(self):
         return [
+            ("ПСП",
+             lambda: ("ПСП", self.last_part4_data["t"], self.last_part4_data["psp"], "line", "Время, с", "")),
+
+            # ("ПСП на выходе демодулятора (импульсы)",
+            #  lambda: ("ПСП выходная", self.last_part4_data["t_rec"], self.last_part4_data["rec"], "step", "Время, с",
+            #           "")),
             ("Выход ФНЧ (Синф.)",
              lambda: ("Выход ФНЧ (Синф.)", self.last_part4_data["t"], self.last_part4_data["lpf_sin"], "line",
                       "Время, с", "")),
@@ -2398,6 +2840,9 @@ class MainWindow(QMainWindow):
             ("Реализация на выходе ФД",
              lambda: ("Реализация на выходе ФД", self.last_part4_data["t"], self.last_part4_data["phase"], "line",
                       "Время, с", "")),
+            ("ПСП на выходе демодулятора",
+             lambda: ("ПСП на выходе демодулятора", self.last_part4_data["t_rec"], self.last_part4_data["rec"], "scatter", "Время, с",
+                      "")),
         ]
 
     def _show_overlay_dialog(self, part_name, graph_items):
@@ -2429,47 +2874,397 @@ class MainWindow(QMainWindow):
             self._plot_overlay(selected)
 
     def _plot_overlay(self, graphs_data):
-        """Строит наложение выбранных графиков"""
+        """Строит наложение выбранных графиков с отдельным окном легенды"""
         dialog = QDialog(self)
         dialog.setWindowTitle("Наложение графиков")
-        dialog.resize(900, 600)
+        dialog.resize(1200, 700)  # Увеличил размер для легенды справа
 
-        layout = QVBoxLayout(dialog)
+        dialog.setWindowFlags(
+            Qt.Dialog |
+            Qt.WindowCloseButtonHint |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
+            Qt.WindowSystemMenuHint
+        )
 
-        canvas = FigureCanvas(Figure(figsize=(10, 6)))
+        # Используем QHBoxLayout для размещения графика и легенды рядом
+        main_layout = QHBoxLayout(dialog)
+        main_layout.setContentsMargins(2, 2, 2, 2)
+        main_layout.setSpacing(5)
+
+        # ==================== ЛЕВАЯ ЧАСТЬ - ГРАФИК ====================
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(3)
+
+        # Создаем фигуру и канвас
+        fig = Figure(figsize=(10, 8))
+        canvas = FigureCanvas(fig)
+        canvas.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
+        # Панель управления
+        control_panel = QWidget()
+        control_panel.setFixedHeight(40)
+        control_layout = QHBoxLayout(control_panel)
+        control_layout.setContentsMargins(5, 2, 5, 2)
+        control_layout.setSpacing(8)
+
+        # Кнопка для показа/скрытия панели легенды
+        self.show_legend_btn_overlay = QPushButton("📋 Показать легенду")  # Текст изменён
+        self.show_legend_btn_overlay.setFixedHeight(30)
+        self.show_legend_btn_overlay.setMinimumWidth(100)
+        self.show_legend_btn_overlay.setCheckable(True)
+        self.show_legend_btn_overlay.setChecked(False)  # <--- ИЗМЕНЕНО: теперь не отмечена
+        self.show_legend_btn_overlay.setStyleSheet("""
+                QPushButton {
+                    background-color: #2196F3;
+                    color: white;
+                    font-weight: bold;
+                    padding: 4px 10px;
+                    border-radius: 4px;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background-color: #1976D2;
+                }
+                QPushButton:checked {
+                    background-color: #f44336;
+                }
+            """)
+
+        control_layout.addWidget(self.show_legend_btn_overlay)
+        control_layout.addStretch()
+        control_panel.setLayout(control_layout)
+
+        # Контейнер для графика
+        left_layout.addWidget(canvas, stretch=1)
+        left_layout.addWidget(control_panel)
+
+        # Тулбар
         toolbar = NavigationToolbar(canvas, dialog)
-        layout.addWidget(toolbar)
-        layout.addWidget(canvas)
+        toolbar.setFixedHeight(35)
+        left_layout.addWidget(toolbar)
 
-        btn_close = QPushButton("Закрыть")
-        btn_close.clicked.connect(dialog.accept)
-        layout.addWidget(btn_close)
+        # ==================== ПРАВАЯ ЧАСТЬ - ЛЕГЕНДА ====================
+        right_widget = QWidget()
+        right_widget.setFixedWidth(300)
+        right_widget.setStyleSheet("""
+            QWidget {
+                background-color: #f8f9fa;
+                border-left: 1px solid #ccc;
+            }
+        """)
+        right_widget.hide()  # <--- ДОБАВИТЬ ЭТУ СТРОКУ - легенда изначально скрыта
 
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(5, 5, 5, 5)
+        right_layout.setSpacing(5)
+
+        # Заголовок легенды
+        legend_title = QLabel("📊 Легенда графиков")
+        legend_title.setStyleSheet("""
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+            padding: 5px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+        """)
+        legend_title.setAlignment(Qt.AlignCenter)
+        right_layout.addWidget(legend_title)
+
+        # Scroll area для элементов легенды
+        legend_scroll = QScrollArea()
+        legend_scroll.setWidgetResizable(True)
+        legend_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+        """)
+
+        legend_container = QWidget()
+        self.legend_items_layout = QVBoxLayout(legend_container)
+        self.legend_items_layout.setSpacing(8)
+        self.legend_items_layout.setContentsMargins(5, 5, 5, 5)
+        self.legend_items_layout.addStretch()
+
+        legend_scroll.setWidget(legend_container)
+        right_layout.addWidget(legend_scroll)
+
+        # Добавляем левую и правую части в основной layout
+        main_layout.addWidget(left_widget, stretch=3)
+        main_layout.addWidget(right_widget, stretch=0)
+
+        # Создаем ОДНУ ось
+        ax = fig.add_subplot(111)
+        fig.subplots_adjust(left=0.07, right=0.96, top=0.93, bottom=0.08)
+
+        # Сохраняем данные
+        self.current_overlay_graphs = graphs_data
+        self.current_overlay_canvas = canvas
+        self.current_overlay_ax = ax
+        self.current_overlay_is_scatter = True
+
+        # Цвета
+        BLUE_COLOR = '#1f77b4'
+        RED_COLOR = '#d62728'
+        OTHER_COLORS = ['#2ca02c', '#ff7f0e', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        markers = ['o', 's', '^', 'v', 'D', '*', 'x', '+', 'd', 'p']
+
+        # Проверяем, есть ли выходная ПСП для переключения режима
+        has_psp_output = any("ПСП на выходе" in name or "Восстановленная ПСП" in name or "ПСП выходная" in name
+                             for name, _, _, _, _, _ in graphs_data)
+
+        def update_legend_panel(legend_data):
+            """Обновляет панель легенды"""
+            # Очищаем существующие элементы (кроме stretch)
+            while self.legend_items_layout.count() > 1:
+                item = self.legend_items_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+
+            # Добавляем новые элементы
+            for name, color, plot_type in legend_data:
+                item_widget = QWidget()
+                item_widget.setStyleSheet("border: none; background-color: transparent;")
+
+                item_layout = QHBoxLayout()
+                item_layout.setContentsMargins(5, 5, 5, 5)
+                item_layout.setSpacing(10)
+
+                # Цветной индикатор
+                indicator = QLabel()
+                indicator.setFixedSize(24, 24)
+                indicator.setStyleSheet("border: none; background-color: transparent;")
+
+                # Создаем пиксельную карту для индикатора
+                pixmap = QtGui.QPixmap(24, 24)
+                pixmap.fill(Qt.transparent)
+                painter = QtGui.QPainter(pixmap)
+                painter.setRenderHint(QtGui.QPainter.Antialiasing)
+
+                if plot_type == 'scatter':
+                    painter.setPen(QtGui.QPen(QtCore.Qt.NoPen))
+                    painter.setBrush(QtGui.QBrush(QtGui.QColor(color)))
+                    painter.drawEllipse(8, 8, 8, 8)
+                elif plot_type == 'step':
+                    painter.setPen(QtGui.QPen(QtGui.QColor(color), 2))
+                    painter.setBrush(QtCore.Qt.NoBrush)
+                    painter.drawLine(4, 12, 20, 12)
+                else:
+                    painter.setPen(QtGui.QPen(QtGui.QColor(color), 2))
+                    painter.setBrush(QtCore.Qt.NoBrush)
+                    painter.drawLine(4, 12, 20, 12)
+
+                painter.end()
+                indicator.setPixmap(pixmap)
+
+                # Название
+                name_label = QLabel(name)
+                name_label.setWordWrap(True)
+                name_label.setStyleSheet("""
+                    color: #333;
+                    border: none;
+                    background-color: transparent;
+                    font-size: 12px;
+                """)
+
+                item_layout.addWidget(indicator)
+                item_layout.addWidget(name_label, stretch=1)
+                item_widget.setLayout(item_layout)
+
+                # Добавляем в основной layout перед stretch
+                self.legend_items_layout.insertWidget(self.legend_items_layout.count() - 1, item_widget)
+
+        def draw_overlay():
+            ax.clear()
+            ax.set_xlabel("Время, с", fontsize=12)
+            ax.set_ylabel("", fontsize=12)
+            ax.set_title("Наложение графиков", fontsize=14)
+            ax.grid(True, alpha=0.3)
+
+            legend_data = []
+
+            # Разделяем графики
+            psp_input_data = None
+            psp_output_data = None
+            other_graphs = []
+
+            for name, x, y, plot_type, xlabel, ylabel in graphs_data:
+                if "ПСП на выходе" in name or "Восстановленная ПСП" in name or "ПСП выходная" in name:
+                    psp_output_data = (name, x, y, plot_type, xlabel, ylabel)
+                elif "ПСП" in name or "входная" in name:
+                    psp_input_data = (name, x, y, plot_type, xlabel, ylabel)
+                else:
+                    other_graphs.append((name, x, y, plot_type, xlabel, ylabel))
+
+            plot_counter = 0
+
+            # Рисуем входную ПСП
+            if psp_input_data:
+                name, x, y, plot_type, xlabel, ylabel = psp_input_data
+                color = BLUE_COLOR
+                ax.step(x, y, where='post', color=color, linewidth=2.0, alpha=0.8, label=name)
+                clean_name = name.replace("ПСП", "").strip()
+                if not clean_name:
+                    clean_name = name
+                legend_data.append((clean_name, color, 'step'))
+                plot_counter += 1
+
+            # Рисуем выходную ПСП
+            if psp_output_data:
+                name, x, y, plot_type, xlabel, ylabel = psp_output_data
+                color = RED_COLOR
+                if self.current_overlay_is_scatter:
+                    ax.scatter(x, y, color=color, marker='o', s=40, alpha=0.8, zorder=5, edgecolors='none', label=name)
+                    plot_type_legend = 'scatter'
+                else:
+                    ax.step(x, y, where='post', color=color, linewidth=2.0, alpha=0.8, label=name)
+                    plot_type_legend = 'step'
+                clean_name = name.replace("ПСП", "").strip()
+                if not clean_name:
+                    clean_name = name
+                legend_data.append((clean_name, color, plot_type_legend))
+                plot_counter += 1
+
+            # Рисуем остальные графики
+            for idx, (name, x, y, plot_type, xlabel, ylabel) in enumerate(other_graphs):
+                if plot_counter == 0:
+                    color = BLUE_COLOR
+                elif plot_counter == 1:
+                    color = RED_COLOR
+                else:
+                    color = OTHER_COLORS[(plot_counter - 2) % len(OTHER_COLORS)]
+
+                if plot_type == 'step':
+                    ax.step(x, y, where='post', color=color, linewidth=1.5, alpha=0.8, label=name)
+                    plot_type_legend = 'step'
+                elif plot_type == 'scatter':
+                    marker = markers[idx % len(markers)]
+                    ax.scatter(x, y, color=color, marker=marker, s=40, alpha=0.8, zorder=5, edgecolors='none',
+                               label=name)
+                    plot_type_legend = 'scatter'
+                else:
+                    ax.plot(x, y, color=color, linewidth=1.5, alpha=0.8, label=name)
+                    plot_type_legend = 'line'
+
+                clean_name = name.replace("ПСП", "").strip()
+                if not clean_name:
+                    clean_name = name
+                legend_data.append((clean_name, color, plot_type_legend))
+                plot_counter += 1
+
+            fig.subplots_adjust(left=0.07, right=0.96, top=0.93, bottom=0.08)
+            ax.relim()
+            ax.autoscale_view()
+            canvas.draw()
+
+            # Обновляем панель легенды
+            update_legend_panel(legend_data)
+
+        def toggle_legend_panel():
+            """Показывает/скрывает панель легенды"""
+            if right_widget.isVisible():
+                right_widget.hide()
+                self.show_legend_btn_overlay.setText("📋 Показать легенду")
+                self.show_legend_btn_overlay.setChecked(False)
+            else:
+                right_widget.show()
+                self.show_legend_btn_overlay.setText("📋 Скрыть легенду")
+                self.show_legend_btn_overlay.setChecked(True)
+
+        # Подключаем кнопку
+        self.show_legend_btn_overlay.clicked.connect(toggle_legend_panel)
+
+        # Если есть выходная ПСП, добавляем кнопку переключения режима
+        if has_psp_output:
+            self.toggle_psp_btn_overlay = QPushButton("📊 Переключить выходную ПСП на импульсы")
+            self.toggle_psp_btn_overlay.setStyleSheet("""
+                QPushButton {
+                    background-color: #FF9800;
+                    color: white;
+                    font-weight: bold;
+                    padding: 4px 10px;
+                    border-radius: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #F57C00;
+                }
+            """)
+
+            # Вставляем перед кнопкой легенды
+            control_layout.insertWidget(0, self.toggle_psp_btn_overlay)
+
+            def toggle_psp_mode():
+                self.current_overlay_is_scatter = not self.current_overlay_is_scatter
+                if self.current_overlay_is_scatter:
+                    self.toggle_psp_btn_overlay.setText("📊 Переключить выходную ПСП на импульсы")
+                else:
+                    self.toggle_psp_btn_overlay.setText("📊 Переключить выходную ПСП на отсчёты")
+                draw_overlay()
+
+            self.toggle_psp_btn_overlay.clicked.connect(toggle_psp_mode)
+
+        # Рисуем начальный график
+        draw_overlay()
+
+        dialog.exec()
+
+    def _toggle_psp_mode(self, dialog, canvas, graphs_data):
+        """Переключает режим отображения ПСП"""
+        self.psp_mode_is_scatter = not self.psp_mode_is_scatter
+
+        # Обновляем текст кнопки
+        if self.psp_mode_is_scatter:
+            self.toggle_psp_btn.setText("📊 Переключить ПСП на импульсы")
+            # self.psp_mode_label.setText("ПСП отображается: Точками")
+        else:
+            self.toggle_psp_btn.setText("📊 Переключить ПСП на отсчёты")
+            # self.psp_mode_label.setText("ПСП отображается: Импульсами")
+
+        # Перерисовываем
+        self._draw_overlay_with_psp_mode(graphs_data, canvas, self.psp_mode_is_scatter)
+
+    def _draw_overlay_with_psp_mode(self, graphs_data, canvas, is_scatter):
+        """Рисует наложение с учётом режима отображения ПСП"""
         ax = canvas.figure.add_subplot(111)
+        ax.clear()
+
         colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
-        markers = ['o', 's', '^', 'v', 'D', '*', 'x', '+', 'd', 'p']  # разные маркеры для разных графиков
+        markers = ['o', 's', '^', 'v', 'D', '*', 'x', '+', 'd', 'p']
 
         for idx, (name, x, y, plot_type, xlabel, ylabel) in enumerate(graphs_data):
             color = colors[idx % len(colors)]
-            if plot_type == 'step':
-                ax.step(x, y, where='post', color=color, linewidth=1.5, label=name, alpha=0.8)
-            elif plot_type == 'scatter':
-                # Точечный график (отсчеты)
-                marker = markers[idx % len(markers)]
-                ax.scatter(x, y, color=color, marker=marker, s=40, label=name, alpha=0.8, zorder=5)
-            else:  # 'line'
-                ax.plot(x, y, color=color, linewidth=1.5, label=name, alpha=0.8)
 
-        ax.set_xlabel(graphs_data[0][4] if graphs_data[0][4] else "X")
-        ax.set_ylabel("")
-        ax.set_title("Наложение графиков")
+            if idx == 0:
+                ax.set_xlabel(xlabel if xlabel else "X")
+                ax.set_ylabel("")
+                ax.set_title("Наложение графиков")
+
+            # Для ПСП графиков используем выбранный режим
+            if "ПСП" in name:
+                if is_scatter:
+                    marker = markers[idx % len(markers)]
+                    ax.scatter(x, y, color=color, marker=marker, s=40, label=name, alpha=0.8, zorder=5)
+                else:
+                    ax.step(x, y, where='post', color=color, linewidth=1.5, label=name, alpha=0.8)
+            else:
+                # Для остальных графиков оставляем как есть
+                if plot_type == 'step':
+                    ax.step(x, y, where='post', color=color, linewidth=1.5, label=name, alpha=0.8)
+                elif plot_type == 'scatter':
+                    marker = markers[idx % len(markers)]
+                    ax.scatter(x, y, color=color, marker=marker, s=40, label=name, alpha=0.8, zorder=5)
+                else:  # 'line'
+                    ax.plot(x, y, color=color, linewidth=1.5, label=name, alpha=0.8)
+
         ax.legend(loc='best', fontsize=10)
         ax.grid(True, alpha=0.3)
         ax.relim()
         ax.autoscale_view()
-
         canvas.draw()
-        dialog.exec()
 
     def _draw_new_scheme(self):
         scene = QtWidgets.QGraphicsScene()
@@ -2784,6 +3579,18 @@ class MainWindow(QMainWindow):
 
     def start_part1(self):
         """Запуск части 1 с глобальными параметрами"""
+
+        # Создаем прогресс-бар
+        self.progress_dialog = QProgressDialog("Выполняется расчет части 1...", "Отмена", 0, 0, self)
+        self.progress_dialog.setWindowTitle("Расчет")
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setCancelButton(None)  # Убираем кнопку отмены
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.show()
+
+        # Блокируем интерфейс
+        self.set_controls_enabled(False)
+
         sys_params = self.global_params.get_system_params()
         noise_params = self.global_params.get_noise_params()
         filter_params = self.global_params.get_filter_params()
@@ -2807,7 +3614,8 @@ class MainWindow(QMainWindow):
             Sr=pll_params['Sr'],
             T_lf=pll_params['T_lf'],
             delay_deg=pll_params['delay_deg'],
-            noise_params=noise_params
+            noise_params=noise_params,
+            carrier_only=self.global_params.is_carrier_only()
         )
         self.worker.finished.connect(self.update_plots_part1)
         self.worker.start()
@@ -2829,14 +3637,34 @@ class MainWindow(QMainWindow):
         self.tab_spec2.plot(data["f2"], 10 * np.log10(pxx2))
 
         # self.tab_out.step_plot(data["t_rec"], data["rec"])
-        self.tab_out.scatter_plot(data["t_rec"], data["rec"], color='red', markersize=8, label="Отсчеты")
+        self.tab_out.update_plot(data["t_rec"], data["rec"], label="")
         self.tab_compare.step_plot(data["t_rec"], data["psp_bits"], ax_index=0, color='blue', label="Вход")
         self.tab_compare.step_plot(data["t_rec"], data["rec"], ax_index=1, color='red', label="Выход")
 
         self.label_errors.setText(f"Ошибки: {data['errors']} | BER: {data['ber']:.6f}")
 
+        # Закрываем прогресс-бар
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.close()
+
+        # Разблокируем интерфейс
+        self.set_controls_enabled(True)
+
+
     def start_part2(self):
         """Запуск части 2 с глобальными параметрами"""
+
+        # Создаем прогресс-бар
+        self.progress_dialog = QProgressDialog("Выполняется расчет части 2...", "Отмена", 0, 0, self)
+        self.progress_dialog.setWindowTitle("Расчет")
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setCancelButton(None)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.show()
+
+        # Блокируем интерфейс
+        self.set_controls_enabled(False)
+
         sys_params = self.global_params.get_system_params()
         noise_params = self.global_params.get_noise_params()
         filter_params = self.global_params.get_filter_params()
@@ -2860,7 +3688,8 @@ class MainWindow(QMainWindow):
             Gp=pll_params['Gp'],
             Sr=pll_params['Sr'],
             T_lf=pll_params['T_lf'],
-            delay_deg=pll_params['delay_deg']
+            delay_deg=pll_params['delay_deg'],
+            carrier_only=self.global_params.is_carrier_only()
         )
         self.worker2.finished.connect(self.update_part2)
         self.worker2.start()
@@ -2917,7 +3746,7 @@ class MainWindow(QMainWindow):
         self.btn_overlay2.setEnabled(True)
 
         # График исходной ПСП (синий)
-        self.tab_psp2.plot(d["t"], d["psp"], color='blue', linewidth=1.5, label="ПСП")
+        self.tab_psp2.plot(d["t"], d["psp"], color='blue', linewidth=1.5, label="")
 
 
 
@@ -2963,10 +3792,17 @@ class MainWindow(QMainWindow):
         ax3.grid(True)
 
         # НОВЫЙ ГРАФИК - ПСП на выходе демодулятора (точки)
-        self.tab_demod_out2.scatter_plot(d["t_rec"], d["rec"], color='red', markersize=8, label="Отсчеты")
+        self.tab_demod_out2.update_plot(d["t_rec"], d["rec"], label="")
 
         self.tab_spec_mul.canvas.draw()
         self.tab_spec_lpf.canvas.draw()
+
+        # Закрываем прогресс-бар
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.close()
+
+        # Разблокируем интерфейс
+        self.set_controls_enabled(True)
 
         # # === СРАВНЕНИЕ ПСП (часть 2) - ТОЧКИ вместо ступенек ===
         # # Очищаем оси
@@ -2992,10 +3828,22 @@ class MainWindow(QMainWindow):
         # self.tab_compare2.canvas.draw()
 
         # === ОТОБРАЖЕНИЕ ОШИБОК И BER ===
-        # self.label_errors2.setText(f"Ошибки: {d['errors']} | BER: {d['ber']:.6f}")
+        self.label_errors2.setText(f"Ошибки: {d['errors']} | BER: {d['ber']:.6f}")
 
     def start_part3(self):
         """Запуск части 3 с глобальными параметрами"""
+
+        # Создаем прогресс-бар
+        self.progress_dialog = QProgressDialog("Выполняется расчет части 3...", "Отмена", 0, 0, self)
+        self.progress_dialog.setWindowTitle("Расчет")
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setCancelButton(None)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.show()
+
+        # Блокируем интерфейс
+        self.set_controls_enabled(False)
+
         sys_params = self.global_params.get_system_params()
         noise_params = self.global_params.get_noise_params()
         filter_params = self.global_params.get_filter_params()
@@ -3020,7 +3868,8 @@ class MainWindow(QMainWindow):
             T_lf=pll_params['T_lf'],
             delay_deg=pll_params['delay_deg'],
             noise_params=noise_params,
-            dphi=self.dphi.value()
+            dphi=self.dphi.value(),
+            carrier_only=self.global_params.is_carrier_only()
         )
         self.worker3.finished.connect(self.update_part3)
         self.worker3.start()
@@ -3036,10 +3885,10 @@ class MainWindow(QMainWindow):
             self.last_fs = self.worker3.last_Fs
             self.btn_psd.setEnabled(True)
 
-        self.tab_psp3.plot(d["t"], d["psp"], color='blue', linewidth=1.5, label="Входная ПСП")
+        self.tab_psp3.plot(d["t"], d["psp"], color='blue', linewidth=1.5, label="")
 
         # Выходная ПСП (точки/отсчеты)
-        self.tab_demod_out3.scatter_plot(d["t_rec"], d["rec"], color='red', markersize=8, label="Отсчеты на выходе")
+        self.tab_demod_out3.update_plot(d["t_rec"], d["rec"], label="")
 
         # Обновляем объединенный график ФНЧ (синфазный и квадратурный)
         # Верхний график (ax_index=0) - синфазный (sin)
@@ -3065,11 +3914,30 @@ class MainWindow(QMainWindow):
                 self.label_ber3.setStyleSheet(
                     "font-size: 14px; font-weight: bold; color: green; background-color: #e0ffe0; padding: 5px; border-radius: 5px;")
 
+        # Закрываем прогресс-бар
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.close()
+
+        # Разблокируем интерфейс
+        self.set_controls_enabled(True)
+
     def compute_psd_only(self):
         """Отдельный расчёт СПМ с текущим значением transition"""
         if self.last_vco_signal is None:
             QMessageBox.warning(self, "Ошибка", "Сначала выполните основной расчёт")
             return
+
+        # Создаем прогресс-бар
+        self.psd_progress = QProgressDialog("Выполняется расчет СПМ...", "Отмена", 0, 0, self)
+        self.psd_progress.setWindowTitle("Расчет спектра")
+        self.psd_progress.setWindowModality(Qt.WindowModal)
+        self.psd_progress.setCancelButton(None)  # Убираем кнопку отмены
+        self.psd_progress.setMinimumDuration(0)
+        self.psd_progress.show()
+
+        # Блокируем кнопку построения СПМ
+        self.btn_psd.setEnabled(False)
+        self.btn_psd.setText("Расчёт СПМ...")
 
         self.psd_worker = PSDWorker(
             self.last_vco_signal,
@@ -3079,8 +3947,7 @@ class MainWindow(QMainWindow):
         self.psd_worker.finished.connect(self.update_psd)
         self.psd_worker.start()
 
-        self.btn_psd.setText("Расчёт СПМ...")
-        self.btn_psd.setEnabled(False)
+
 
     # def update_psd(self, d):
     #     self.tab_vco_spec.plot(d["f_vco"], d["pxx_vco"])
@@ -3103,12 +3970,27 @@ class MainWindow(QMainWindow):
         # Обновляем canvas
         self.tab_vco_spec.canvas.draw()
 
+        # Закрываем прогресс-бар
+        if hasattr(self, 'psd_progress'):
+            self.psd_progress.close()
+
         # Восстанавливаем кнопку
         self.btn_psd.setText("Построить СПМ")
         self.btn_psd.setEnabled(True)
 
     def start_part4(self):
         """Запуск части 4 с глобальными параметрами"""
+        # Создаем прогресс-бар
+        self.progress_dialog = QProgressDialog("Выполняется расчет части 4...", "Отмена", 0, 0, self)
+        self.progress_dialog.setWindowTitle("Расчет")
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setCancelButton(None)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.show()
+
+        # Блокируем интерфейс
+        self.set_controls_enabled(False)
+
         sys_params = self.global_params.get_system_params()
         noise_params = self.global_params.get_noise_params()
         filter_params = self.global_params.get_filter_params()
@@ -3133,11 +4015,333 @@ class MainWindow(QMainWindow):
             T_lf=pll_params['T_lf'],
             delay_deg=pll_params['delay_deg'],
             noise_params=noise_params,
-            freq_offset=self.freq_offset.value()
+            freq_offset=self.freq_offset.value(),
+            carrier_only=self.global_params.is_carrier_only()
         )
         self.worker4.finished.connect(self.update_part4)
         self.worker4.start()
         self.btn_psd4.setEnabled(False)
+
+    def run_ber_vs_freq_scan(self):
+        """Автоматический прогон для разных значений частотной расстройки Δf с измерением BER"""
+
+        # Создаем диалоговое окно с прогрессом
+        progress_dialog = QProgressDialog("Выполняется сканирование частоты...", "Отмена", 0, 100, self)
+        progress_dialog.setWindowTitle("Анализ BER от Δf")
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+
+        # Параметры сканирования (частота в Гц)
+        # freq_values = np.arange(-100, 101, 20)  # от -100 до 100 Гц с шагом 20 Гц
+        freq_values = np.arange(-100, 101, 25)  # от -100 до 100 Гц с шагом 25 Гц
+
+        ber_results = []
+        error_results = []
+
+        # Получаем текущие параметры из глобальных настроек
+        sys_params = self.global_params.get_system_params()
+        noise_params = self.global_params.get_noise_params()
+        filter_params = self.global_params.get_filter_params()
+        pll_params = self.global_params.get_pll_params()
+
+        # Сохраняем текущее значение частотной расстройки
+        original_freq = self.freq_offset.value()
+
+        total = len(freq_values)
+
+        for idx, freq_offset in enumerate(freq_values):
+            # Обновляем прогресс
+            progress_dialog.setValue(int((idx + 1) / total * 100))
+            progress_dialog.setLabelText(f"Измерение BER для Δf = {freq_offset:+d} Гц...")
+
+            if progress_dialog.wasCanceled():
+                break
+
+            # Устанавливаем значение частоты
+            self.freq_offset.setValue(freq_offset)
+
+            # Создаем и запускаем воркер
+            worker = WorkerPart4(
+                T=sys_params['T'],
+                Fs=sys_params['Fs'],
+                Fc=sys_params['Fc'],
+                bits_per_second=sys_params['bits_per_second'],
+                filter_type=filter_params['type'],
+                order_mode=filter_params['order_mode'],
+                filter_order=filter_params['order'],
+                Wp_low=filter_params['Wp_low'],
+                Wp_high=filter_params['Wp_high'],
+                Ws_low=filter_params['Ws_low'],
+                Ws_high=filter_params['Ws_high'],
+                gpass=filter_params['gpass'],
+                gstop=filter_params['gstop'],
+                Gp=pll_params['Gp'],
+                Sr=pll_params['Sr'],
+                T_lf=pll_params['T_lf'],
+                delay_deg=pll_params['delay_deg'],
+                noise_params=noise_params,
+                freq_offset=freq_offset,
+                carrier_only=self.global_params.is_carrier_only()
+            )
+
+            # Используем событие для синхронного ожидания
+            result_container = {}
+            event = QtCore.QEventLoop()
+
+            def on_finished(data):
+                result_container['data'] = data
+                event.quit()
+
+            worker.finished.connect(on_finished)
+            worker.start()
+            event.exec()
+
+            if 'data' in result_container:
+                data = result_container['data']
+                ber_results.append(data['ber'])
+                error_results.append(data['errors'])
+            else:
+                ber_results.append(1.0)
+                error_results.append(0)
+
+            # Даем немного времени на обновление GUI
+            QApplication.processEvents()
+
+        # Восстанавливаем исходное значение частоты
+        self.freq_offset.setValue(original_freq)
+        progress_dialog.close()
+
+        # Строим график результатов
+        self.plot_ber_vs_freq(freq_values[:len(ber_results)], ber_results, error_results)
+
+    def plot_ber_vs_freq(self, freq_values, ber_results, error_results):
+        """Строит график зависимости BER от частотной расстройки"""
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Зависимость BER от частотной расстройки Δf")
+        dialog.resize(800, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        # Создаем фигуру с двумя подграфиками
+        figure = Figure(figsize=(10, 8))
+        canvas = FigureCanvas(figure)
+        toolbar = NavigationToolbar(canvas, dialog)
+
+        ax1 = figure.add_subplot(211)
+        ax2 = figure.add_subplot(212)
+
+        # График BER
+        ax1.semilogy(freq_values, ber_results, 'bo-', linewidth=2, markersize=8, label='BER')
+        ax1.set_xlabel("Частотная расстройка Δf, Гц")
+        ax1.set_ylabel("Bit Error Rate (BER)")
+        ax1.set_title("Зависимость BER от частотной расстройки")
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim([1e-6, 1])
+        ax1.legend()
+
+        # Добавляем отметку для Δf = 0
+        for i, (freq, ber) in enumerate(zip(freq_values, ber_results)):
+            if freq == 0:
+                ax1.annotate(f'Δf=0, BER={ber:.6f}', (freq, ber),
+                             xytext=(freq + 10, ber * 10),
+                             arrowprops=dict(arrowstyle='->', color='green'),
+                             fontsize=9)
+
+        # График количества ошибок
+        bar_width = freq_values[1] - freq_values[0] if len(freq_values) > 1 else 10
+        ax2.bar(freq_values, error_results, width=bar_width,
+                color='red', alpha=0.7, label='Ошибки')
+        ax2.set_xlabel("Частотная расстройка Δf, Гц")
+        ax2.set_ylabel("Количество ошибок")
+        ax2.set_title("Количество ошибочных бит")
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+
+        figure.tight_layout()
+
+        layout.addWidget(toolbar)
+        layout.addWidget(canvas)
+
+        # Кнопка закрытия
+        btn_close = QPushButton("Закрыть")
+        btn_close.clicked.connect(dialog.accept)
+        layout.addWidget(btn_close)
+
+        # Добавляем информационную панель
+        info_text = QTextEdit()
+        info_text.setMaximumHeight(150)
+        info_text.setReadOnly(True)
+
+        info = "Результаты измерения BER:\n"
+        info += "=" * 60 + "\n"
+        info += f"{'Δf, Гц':<12} {'BER':<12} {'Ошибки':<10}\n"
+        info += "-" * 60 + "\n"
+
+        # ИСПРАВЛЕНО: используем np.argmin() вместо index()
+        min_ber_idx = np.argmin(ber_results)
+        min_ber = ber_results[min_ber_idx]
+        min_ber_freq = freq_values[min_ber_idx]
+
+        for freq, ber, errors in zip(freq_values, ber_results, error_results):
+            if ber == 0:
+                ber_str = "0 (идеально)"
+            elif ber < 0.001:
+                ber_str = f"{ber:.2e}"
+            else:
+                ber_str = f"{ber:.6f}"
+            info += f"{freq:+d}{' ':<8} {ber_str:<12} {errors:<10}\n"
+
+        # Добавляем анализ
+        info += "\n" + "=" * 60 + "\n"
+        info += "Анализ результатов:\n"
+        info += f"✓ Минимальный BER ({min_ber:.6f}) при Δf = {min_ber_freq:+d} Гц\n"
+
+        # Находим полосу захвата (где BER < 0.01)
+        lock_range = []
+        for freq, ber in zip(freq_values, ber_results):
+            if ber < 0.01:
+                lock_range.append(freq)
+
+        if lock_range:
+            info += f"✓ Полоса захвата СВН (BER < 0.01): от {min(lock_range):+d} до {max(lock_range):+d} Гц\n"
+
+        # Находим максимальный BER
+        max_ber_idx = np.argmax(ber_results)
+        info += f"✗ Максимальный BER при Δf = {freq_values[max_ber_idx]:+d} Гц (BER = {ber_results[max_ber_idx]:.6f})\n"
+
+        info_text.setText(info)
+        layout.addWidget(info_text)
+
+        dialog.exec()
+
+    def run_multiple_freq_measurements(self, num_runs=10, freq_step=25):
+        """Запускает несколько измерений для усреднения BER по частоте"""
+
+        # Создаем диалог с параметрами
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Многократные измерения BER по частоте")
+        dialog.setModal(True)
+        dialog.resize(400, 250)
+
+        layout = QVBoxLayout(dialog)
+
+        form_layout = QFormLayout()
+
+        num_runs_spin = QSpinBox()
+        num_runs_spin.setRange(1, 50)
+        num_runs_spin.setValue(num_runs)
+        num_runs_spin.setSuffix(" запусков")
+
+        freq_step_spin = QSpinBox()
+        freq_step_spin.setRange(10, 100)
+        freq_step_spin.setValue(freq_step)
+        freq_step_spin.setSuffix(" Гц")
+        freq_step_spin.setSingleStep(10)
+
+        form_layout.addRow("Количество измерений для каждой частоты:", num_runs_spin)
+        form_layout.addRow("Шаг по частоте:", freq_step_spin)
+
+        layout.addLayout(form_layout)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(dialog.accept)
+        btn_box.rejected.connect(dialog.reject)
+        layout.addWidget(btn_box)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        num_runs = num_runs_spin.value()
+        freq_step = freq_step_spin.value()
+
+        # Параметры сканирования
+        freq_values = np.arange(-200, 201, 50)
+
+        # Массивы для усредненных результатов
+        avg_ber = np.zeros(len(freq_values))
+        avg_errors = np.zeros(len(freq_values))
+
+        # Прогресс бар
+        progress = QProgressDialog(f"Выполняется {num_runs} измерений для каждой частоты...", "Отмена",
+                                   0, len(freq_values) * num_runs, self)
+        progress.setWindowTitle("Многократные измерения BER")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+
+        # Получаем параметры
+        sys_params = self.global_params.get_system_params()
+        noise_params = self.global_params.get_noise_params()
+        filter_params = self.global_params.get_filter_params()
+        pll_params = self.global_params.get_pll_params()
+
+        original_freq = self.freq_offset.value()
+        current_run = 0
+
+        for f_idx, freq_offset in enumerate(freq_values):
+            ber_sum = 0
+            errors_sum = 0
+
+            for run in range(num_runs):
+                progress.setValue(current_run)
+                progress.setLabelText(f"Δf = {freq_offset:+d} Гц, измерение {run + 1}/{num_runs}...")
+
+                if progress.wasCanceled():
+                    break
+
+                # Создаем и запускаем воркер
+                worker = WorkerPart4(
+                    T=sys_params['T'],
+                    Fs=sys_params['Fs'],
+                    Fc=sys_params['Fc'],
+                    bits_per_second=sys_params['bits_per_second'],
+                    filter_type=filter_params['type'],
+                    order_mode=filter_params['order_mode'],
+                    filter_order=filter_params['order'],
+                    Wp_low=filter_params['Wp_low'],
+                    Wp_high=filter_params['Wp_high'],
+                    Ws_low=filter_params['Ws_low'],
+                    Ws_high=filter_params['Ws_high'],
+                    gpass=filter_params['gpass'],
+                    gstop=filter_params['gstop'],
+                    Gp=pll_params['Gp'],
+                    Sr=pll_params['Sr'],
+                    T_lf=pll_params['T_lf'],
+                    delay_deg=pll_params['delay_deg'],
+                    noise_params=noise_params,
+                    freq_offset=freq_offset
+                )
+
+                result_container = {}
+                event = QtCore.QEventLoop()
+
+                def on_finished(data):
+                    result_container['data'] = data
+                    event.quit()
+
+                worker.finished.connect(on_finished)
+                worker.start()
+                event.exec()
+
+                if 'data' in result_container:
+                    data = result_container['data']
+                    ber_sum += data['ber']
+                    errors_sum += data['errors']
+
+                current_run += 1
+                QApplication.processEvents()
+
+            if progress.wasCanceled():
+                break
+
+            avg_ber[f_idx] = ber_sum / num_runs
+            avg_errors[f_idx] = errors_sum / num_runs
+
+        progress.close()
+        self.freq_offset.setValue(original_freq)
+
+        # Строим график усредненных результатов
+        self.plot_ber_vs_freq(freq_values[:len(avg_ber)], avg_ber, avg_errors)
 
     def update_part4(self, d):
         # Сохраняем данные для последующего использования
@@ -3148,25 +4352,55 @@ class MainWindow(QMainWindow):
             self.last_fs4 = self.worker4.last_Fs
             self.btn_psd4.setEnabled(True)
 
-        # Активируем кнопку наложения
-        # self.btn_overlay4.setEnabled(True)
+        # НОВЫЕ ГРАФИКИ ПСП
+        self.tab_psp4.plot(d["t"], d["psp"], color='blue', linewidth=1.5, label="")
 
-        # Обновляем объединенный график ФНЧ (синфазный и квадратурный)
+        if "rec" in d and "t_rec" in d:
+            self.tab_demod_out4.update_plot(d["t_rec"], d["rec"], label="")
+
+        # Обновляем объединенный график ФНЧ
         self.tab4_lpf_combined.plot(d["t"], d["lpf_sin"], ax_index=0, color='red', label="Синфазный канал")
         self.tab4_lpf_combined.plot(d["t"], d["lpf_cos"], ax_index=1, color='blue', label="Квадратурный канал")
 
-        # Добавляем легенды для каждого подграфика
         self.tab4_lpf_combined.ax[0].legend(loc='best', fontsize=10)
         self.tab4_lpf_combined.ax[1].legend(loc='best', fontsize=10)
 
         # Обновляем отдельный график ФД
         self.tab4_phase.plot(d["t"], d["phase"])
 
+        # Отображение ошибок и BER
+        if "errors" in d and "ber" in d:
+            self.label_ber4.setText(f"Ошибки: {d['errors']} | BER: {d['ber']:.6f}")
+            if d['errors'] > 0:
+                self.label_ber4.setStyleSheet(
+                    "font-size: 14px; font-weight: bold; color: red; background-color: #ffe0e0; padding: 5px; border-radius: 5px;")
+            else:
+                self.label_ber4.setStyleSheet(
+                    "font-size: 14px; font-weight: bold; color: green; background-color: #e0ffe0; padding: 5px; border-radius: 5px;")
+
+        # Закрываем прогресс-бар
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.close()
+        # Разблокируем интерфейс
+        self.set_controls_enabled(True)
+
     def compute_psd_only4(self):
         """Отдельный расчёт СПМ с учетом сдвига частоты"""
         if not hasattr(self, 'last_vco_signal4') or self.last_vco_signal4 is None:
             QMessageBox.warning(self, "Ошибка", "Сначала выполните основной расчёт")
             return
+
+        # Создаем прогресс-бар
+        self.psd_progress4 = QProgressDialog("Выполняется расчет СПМ...", "Отмена", 0, 0, self)
+        self.psd_progress4.setWindowTitle("Расчет спектра")
+        self.psd_progress4.setWindowModality(Qt.WindowModal)
+        self.psd_progress4.setCancelButton(None)  # Убираем кнопку отмены
+        self.psd_progress4.setMinimumDuration(0)
+        self.psd_progress4.show()
+
+        # Блокируем кнопку построения СПМ
+        self.btn_psd4.setEnabled(False)
+        self.btn_psd4.setText("Расчёт СПМ...")
 
         # Получаем значение сдвига частоты
         freq_offset = self.freq_offset.value()
@@ -3186,6 +4420,13 @@ class MainWindow(QMainWindow):
 
         signal_trim = vco_shifted[transition_samples:]
 
+        # Обновляем прогресс (50%)
+        if hasattr(self, 'psd_progress4'):
+            self.psd_progress4.setLabelText("Вычисление спектральной плотности мощности...")
+
+        # Небольшая задержка для обновления GUI
+        QApplication.processEvents()
+
         if len(signal_trim) >= 1024:
             f, Pxx = signal.periodogram(
                 signal_trim,
@@ -3197,6 +4438,11 @@ class MainWindow(QMainWindow):
             )
             Pxx_db = 10 * np.log10(Pxx + 1e-20)
 
+            # Обновляем прогресс (90%)
+            if hasattr(self, 'psd_progress4'):
+                self.psd_progress4.setLabelText("Построение графика...")
+            QApplication.processEvents()
+
             # Обновляем график как в 3 части
             self.tab4_spec.ax.clear()
             self.tab4_spec.ax.plot(f, Pxx_db, color='blue', linewidth=1.5)
@@ -3205,6 +4451,10 @@ class MainWindow(QMainWindow):
             self.tab4_spec.ax.set_title("СПМ на выходе ГУН (без переходного процесса)", fontsize=14)
             self.tab4_spec.ax.grid(True, alpha=0.3)
             self.tab4_spec.canvas.draw()
+
+            # Закрываем прогресс-бар
+            if hasattr(self, 'psd_progress4'):
+                self.psd_progress4.close()
 
         self.btn_psd4.setText("Построить СПМ")
         self.btn_psd4.setEnabled(True)
@@ -3228,6 +4478,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", "Шаг должен быть положительным!")
             return
 
+        # Создаем прогресс-бар
+        self.progress_dialog = QProgressDialog("Выполняется расчет дискриминационной характеристики...", "Отмена",
+                                                 0, 0, self)
+        self.progress_dialog.setWindowTitle("Расчет")
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setCancelButton(None)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.show()
+
+        # Блокируем интерфейс
+        self.set_controls_enabled(False)
         self.worker5 = WorkerPart5(phase_min, phase_max, phase_step)
         self.worker5.finished.connect(self.update_part5)
         self.worker5.start()
@@ -3236,6 +4497,308 @@ class MainWindow(QMainWindow):
         """Обновляет график дискриминационной характеристики"""
         self.tab_dh.plot(data["phase_diff"], data["output"],
                          color='blue', linewidth=1.5)
+        # Закрываем прогресс-бар
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.close()
+
+        # Разблокируем интерфейс
+        self.set_controls_enabled(True)
+
+    def set_controls_enabled(self, enabled):
+        """Блокирует/разблокирует все кнопки запуска расчетов"""
+        # Часть 1
+        self.btn_part1.setEnabled(enabled)
+        self.btn_overlay1.setEnabled(enabled and hasattr(self, 'last_part1_data'))
+
+        # Часть 2
+        self.btn_part2.setEnabled(enabled)
+        self.btn_dual_plot.setEnabled(enabled and hasattr(self, 'last_part2_data'))
+        self.btn_overlay2.setEnabled(enabled and hasattr(self, 'last_part2_data'))
+
+        # Часть 3
+        self.btn3.setEnabled(enabled)
+        self.btn_psd.setEnabled(enabled and hasattr(self, 'last_vco_signal'))
+        self.btn_overlay3.setEnabled(enabled and hasattr(self, 'last_part3_data'))
+        self.dphi.setEnabled(enabled)
+
+        # Часть 4
+        self.btn4.setEnabled(enabled)
+        self.btn_psd4.setEnabled(enabled and hasattr(self, 'last_vco_signal4'))
+        self.btn_overlay4.setEnabled(enabled and hasattr(self, 'last_part4_data'))
+        self.freq_offset.setEnabled(enabled)
+        self.btn_scan_freq.setEnabled(enabled)
+        self.btn_multirun_freq.setEnabled(enabled)
+
+        # Часть 5
+        self.btn5.setEnabled(enabled)
+        self.phase_min.setEnabled(enabled)
+        self.phase_max.setEnabled(enabled)
+        self.phase_step.setEnabled(enabled)
+
+        # Глобальные параметры - блокируем все вкладки
+        self.global_params.params_tabs.setEnabled(enabled)
+
+    def test_part1_phase_sensitivity(self):
+        """Тестирует зависимость BER от фазового сдвига в части 1 (без СВН)"""
+
+        # Создаем диалог с прогрессом
+        progress_dialog = QProgressDialog("Тестирование чувствительности к фазе...", "Отмена", 0, 100, self)
+        progress_dialog.setWindowTitle("Тест части 1")
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+
+        # Параметры тестирования
+        phase_values = np.arange(0, 181, 15)  # от 0 до 180 с шагом 15°
+
+        ber_results = []
+        error_results = []
+
+        # Получаем текущие параметры
+        sys_params = self.global_params.get_system_params()
+        noise_params = self.global_params.get_noise_params()
+        filter_params = self.global_params.get_filter_params()
+        pll_params = self.global_params.get_pll_params()
+
+        # Сохраняем исходное значение delay_deg
+        original_delay = pll_params['delay_deg']
+
+        total = len(phase_values)
+
+        for idx, phase_shift in enumerate(phase_values):
+            progress_dialog.setValue(int((idx + 1) / total * 100))
+            progress_dialog.setLabelText(f"Тест для фазового сдвига = {phase_shift}°...")
+
+            if progress_dialog.wasCanceled():
+                break
+
+            # Создаем worker с новым значением delay_deg
+            worker = Worker(
+                T=sys_params['T'],
+                Fs=sys_params['Fs'],
+                Fc=sys_params['Fc'],
+                bits_per_second=sys_params['bits_per_second'],
+                filter_type=filter_params['type'],
+                order_mode=filter_params['order_mode'],
+                filter_order=filter_params['order'],
+                Wp_low=filter_params['Wp_low'],
+                Wp_high=filter_params['Wp_high'],
+                Ws_low=filter_params['Ws_low'],
+                Ws_high=filter_params['Ws_high'],
+                gpass=filter_params['gpass'],
+                gstop=filter_params['gstop'],
+                Gp=pll_params['Gp'],
+                Sr=pll_params['Sr'],
+                T_lf=pll_params['T_lf'],
+                delay_deg=phase_shift,  # ← изменяем фазу гетеродина
+                noise_params=noise_params,
+                carrier_only=self.global_params.is_carrier_only()
+            )
+
+            result_container = {}
+            event = QtCore.QEventLoop()
+
+            def on_finished(data):
+                result_container['data'] = data
+                event.quit()
+
+            worker.finished.connect(on_finished)
+            worker.start()
+            event.exec()
+
+            if 'data' in result_container:
+                data = result_container['data']
+                ber_results.append(data['ber'])
+                error_results.append(data['errors'])
+            else:
+                ber_results.append(1.0)
+                error_results.append(0)
+
+            QApplication.processEvents()
+
+        # Восстанавливаем исходное значение
+        # Обновляем параметры в глобальном виджете
+        self.global_params.pll_params.delay_deg.setValue(original_delay)
+
+        progress_dialog.close()
+
+        # Строим график результатов
+        self.plot_part1_phase_test(phase_values[:len(ber_results)], ber_results, error_results)
+
+    def plot_part1_phase_test(self, phase_values, ber_results, error_results):
+        """Строит график зависимости BER от фазового сдвига (часть 1)"""
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Часть 1: Зависимость BER от фазового сдвига (без СВН)")
+        dialog.resize(900, 650)
+
+        layout = QVBoxLayout(dialog)
+
+        figure = Figure(figsize=(10, 8))
+        canvas = FigureCanvas(figure)
+        toolbar = NavigationToolbar(canvas, dialog)
+
+        ax1 = figure.add_subplot(211)
+        ax2 = figure.add_subplot(212)
+
+        # График BER
+        ax1.semilogy(phase_values, ber_results, 'ro-', linewidth=2, markersize=8, label='BER')
+        ax1.set_xlabel("Фазовый сдвиг гетеродина Δθ, град.")
+        ax1.set_ylabel("Bit Error Rate (BER)")
+        ax1.set_title("Часть 1: Зависимость BER от фазы гетеродина (без СВН)", fontsize=12)
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim([1e-6, 1])
+        ax1.legend()
+
+        # Отмечаем особые точки
+        for phase, ber in zip(phase_values, ber_results):
+            if ber < 0.01 and ber > 0:
+                ax1.annotate(f'{phase}°', (phase, ber),
+                             xytext=(phase, ber * 10),
+                             arrowprops=dict(arrowstyle='->', color='green'),
+                             fontsize=8)
+            elif ber > 0.4:
+                ax1.annotate(f'{phase}°\nBER≈{ber:.3f}', (phase, ber),
+                             xytext=(phase + 10, ber),
+                             arrowprops=dict(arrowstyle='->', color='red'),
+                             fontsize=8)
+
+        # График ошибок
+        ax2.bar(phase_values, error_results, width=12, color='red', alpha=0.7, label='Ошибки')
+        ax2.set_xlabel("Фазовый сдвиг гетеродина Δθ, град.")
+        ax2.set_ylabel("Количество ошибок")
+        ax2.set_title("Количество ошибочных бит")
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+
+        figure.tight_layout()
+
+        layout.addWidget(toolbar)
+        layout.addWidget(canvas)
+
+        # Информационная панель
+        info_text = QTextEdit()
+        info_text.setMaximumHeight(180)
+        info_text.setReadOnly(True)
+
+        info = "=" * 70 + "\n"
+        info += "РЕЗУЛЬТАТЫ ТЕСТИРОВАНИЯ ЧАСТИ 1 (демодулятор БЕЗ СВН)\n"
+        info += "=" * 70 + "\n\n"
+
+        info += "Теоретическое ожидание:\n"
+        info += "  • BER = cos²(Δθ) - зависимость от фазы\n"
+        info += "  • При Δθ = 90° → сигнал пропадает (BER ≈ 0.5)\n"
+        info += "  • При Δθ = 180° → инверсия битов (BER ≈ 0.5)\n\n"
+
+        info += "Результаты измерений:\n"
+        info += "-" * 70 + "\n"
+        info += f"{'Δθ, град.':<12} {'BER':<12} {'Ошибки':<10} {'Статус':<20}\n"
+        info += "-" * 70 + "\n"
+
+        best_phase = None
+        best_ber = 1.0
+
+        for phase, ber, errors in zip(phase_values, ber_results, error_results):
+            if ber == 0:
+                status = "✅ ИДЕАЛЬНО"
+                if best_ber > ber:
+                    best_ber = ber
+                    best_phase = phase
+            elif ber < 0.01:
+                status = "✅ Хорошо"
+                if best_ber > ber:
+                    best_ber = ber
+                    best_phase = phase
+            elif ber < 0.1:
+                status = "⚠️ Удовлетворительно"
+            elif ber < 0.4:
+                status = "⚠️ Плохо"
+            else:
+                status = "❌ НЕ РАБОТАЕТ"
+
+            ber_str = "0" if ber == 0 else f"{ber:.6f}"
+            info += f"{phase:<12} {ber_str:<12} {errors:<10} {status:<20}\n"
+
+        info += "-" * 70 + "\n\n"
+
+        info += "АНАЛИЗ:\n"
+        info += f"  • Оптимальная фаза: {best_phase}° (BER = {best_ber:.6f})\n"
+
+        # Находим зоны неработоспособности
+        dead_zones = []
+        for phase, ber in zip(phase_values, ber_results):
+            if ber > 0.4:
+                dead_zones.append(phase)
+
+        if dead_zones:
+            info += f"  • Зоны неработоспособности (BER > 0.4): {dead_zones}°\n"
+            if 90 in phase_values:
+                idx_90 = np.where(phase_values == 90)[0][0]
+                info += f"  • При Δθ = 90° сигнал пропадает! ({ber_results[idx_90]:.4f})\n"
+            else:
+                info += f"  • При Δθ = 90° сигнал должен пропадать (в измерениях нет)\n"
+
+        info += "\nВЫВОД:\n"
+        info += "  Демодулятор без СВН критически зависит от фазы гетеродина.\n"
+        info += "  При фазовом рассогласовании 90° связь полностью пропадает.\n"
+        info += "  При 180° происходит инверсия битов.\n"
+        info += "  Это доказывает необходимость использования СВН в реальных системах.\n"
+
+        info_text.setText(info)
+        layout.addWidget(info_text)
+
+        btn_close = QPushButton("Закрыть")
+        btn_close.clicked.connect(dialog.accept)
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 8px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        layout.addWidget(btn_close)
+
+        dialog.exec()
+
+    def compare_with_theory(self):
+        """Сравнивает экспериментальные результаты с теорией"""
+
+        # Теоретическая зависимость BER от фазы
+        phase_theory = np.arange(0, 181, 5)
+        # Для BPSK: BER = 0.5 * erfc(sqrt(Eb/N0) * |cos(Δθ)|)
+        # Упрощенно: BER ~ 0 при cos²(Δθ) > порога, иначе 0.5
+        ber_theory = []
+
+        for phase in phase_theory:
+            # Нормированная амплитуда сигнала = |cos(phase_rad)|
+            amplitude = abs(np.cos(np.deg2rad(phase)))
+            if amplitude > 0.3:  # условный порог
+                ber_theory.append(0)
+            else:
+                ber_theory.append(0.5)
+
+        # Получаем экспериментальные данные из последнего теста
+        if hasattr(self, '_last_phase_test_results'):
+            exp_phases, exp_bers = self._last_phase_test_results
+
+            # Строим график сравнения
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(phase_theory, ber_theory, 'b--', linewidth=2, label='Теория (упрощенно)')
+            ax.plot(exp_phases, exp_bers, 'ro-', linewidth=2, markersize=8, label='Эксперимент')
+            ax.set_xlabel("Фазовый сдвиг Δθ, град.")
+            ax.set_ylabel("BER")
+            ax.set_title("Сравнение теории и эксперимента (демодулятор без СВН)")
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            ax.set_ylim([-0.05, 1.05])
+
+            plt.show()
+
 
 
 class SelectGraphsDialog(QDialog):
@@ -3324,6 +4887,7 @@ class DualPlotWindow(QMainWindow):
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
         self.resize(900, 700)
+
 
 # ---------- Запуск приложения
 # ---------- Запуск приложения
