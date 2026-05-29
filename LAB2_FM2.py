@@ -2296,18 +2296,6 @@ class MainWindow(QMainWindow):
 
         # В разделе части 1, после кнопки btn_overlay1, добавьте:
 
-        self.btn_test_phase = QPushButton("🔬 Тест чувствительности к фазе")
-        self.btn_test_phase.setMinimumHeight(40)
-        self.btn_test_phase.setStyleSheet("""
-            font-size: 14px; 
-            font-weight: bold; 
-            background-color: #9C27B0; 
-            color: white;
-            border-radius: 6px;
-        """)
-        self.btn_test_phase.clicked.connect(self.test_part1_phase_sensitivity)
-
-        button_layout.addWidget(self.btn_test_phase)
 
         # Добавляем кнопки в горизонтальный layout
         button_layout.addWidget(self.btn_part1)
@@ -2322,7 +2310,7 @@ class MainWindow(QMainWindow):
         # Собираем основную компоновку части 1
         part1_layout.addWidget(graphs_widget)
         part1_layout.addWidget(button_widget)
-        part1_layout.addWidget(self.label_errors)
+        # part1_layout.addWidget(self.label_errors)
         part1_widget.setLayout(part1_layout)
 
         self.main_tabs.addTab(part1_widget, "Часть 1 (Анализ демодулятора)")
@@ -2414,7 +2402,7 @@ class MainWindow(QMainWindow):
 
         part2_layout.addWidget(graphs2)
         part2_layout.addWidget(button_widget)
-        part2_layout.addWidget(self.label_errors2)
+        # part2_layout.addWidget(self.label_errors2)
         part2_widget.setLayout(part2_layout)
 
         self.main_tabs.addTab(part2_widget, "Часть 2 (Анализ СВН)")
@@ -2478,6 +2466,7 @@ class MainWindow(QMainWindow):
         self.dphi.setValue(0)
         self.dphi.setFixedWidth(100)
         self.dphi.setSingleStep(1)  # Шаг 1 градус
+        self.dphi.setDecimals(0)
 
         self.btn3 = QPushButton("Запуск расчёта")
         self.btn3.setFixedWidth(170)  # Такой же как у btn_psd
@@ -2511,7 +2500,7 @@ class MainWindow(QMainWindow):
         control3_layout.addSpacing(10)
         control3_layout.addWidget(self.btn_psd)
         control3_layout.addSpacing(250)
-        control3_layout.addWidget(self.label_ber3)  # ДОБАВИТЬ
+        # control3_layout.addWidget(self.label_ber3)  # ДОБАВИТЬ
 
         control3_widget.setLayout(control3_layout)
 
@@ -2617,7 +2606,7 @@ class MainWindow(QMainWindow):
         control4_layout.addWidget(self.transition4)
         control4_layout.addSpacing(10)
         control4_layout.addWidget(self.btn_psd4)
-        control4_layout.addWidget(self.label_ber4)  # ДОБАВЛЕНО
+        # control4_layout.addWidget(self.label_ber4)  # ДОБАВЛЕНО
         control4_widget.setLayout(control4_layout)
         control4_layout.addSpacing(280)
 
@@ -2648,8 +2637,8 @@ class MainWindow(QMainWindow):
         self.btn_multirun_freq.clicked.connect(lambda: self.run_multiple_freq_measurements(10, 25))
 
         # Добавляем в control4_layout (перед btn_overlay4)
-        control4_layout.addWidget(self.btn_scan_freq)
-        control4_layout.addWidget(self.btn_multirun_freq)
+        # control4_layout.addWidget(self.btn_scan_freq)
+        # control4_layout.addWidget(self.btn_multirun_freq)
 
         part4_layout.addWidget(scroll_area4, stretch=1)
         part4_layout.addWidget(control4_widget)
@@ -2657,70 +2646,92 @@ class MainWindow(QMainWindow):
 
         self.main_tabs.addTab(part4_widget, "Часть 4 (Анализ СВН при Δf ≠ 0)")
 
-        # ==================== ЧАСТЬ 5 ====================
+        # ==================== ЧАСТЬ 5 (исправленная) ====================
         part5_widget = QWidget()
         part5_layout = QVBoxLayout()
 
-        self.part5_tabs = QTabWidget()
+        # Создаем фигуру для графика
+        self.figure5 = Figure(figsize=(10, 6))
+        self.canvas5 = FigureCanvas(self.figure5)
+        self.ax5 = self.figure5.add_subplot(111)
+        self.ax5.set_title("Дискриминационная характеристика", fontsize=14)
+        self.ax5.set_xlabel("Рассогласование по фазе, град.", fontsize=12)
+        self.ax5.set_ylabel("Выход дискриминатора", fontsize=12)
+        self.ax5.grid(True, alpha=0.3)
 
-        # --- параметры ---
-        params5 = QWidget()
-        layout5 = QVBoxLayout()
-        form5 = QFormLayout()
+        # Тулбар для графика
+        self.toolbar5 = NavigationToolbar(self.canvas5, self)
 
+        # Панель параметров (горизонтальная)
+        params_widget = QWidget()
+        params_widget.setFixedHeight(60)
+        params_layout = QHBoxLayout()
+        params_layout.setContentsMargins(10, 5, 10, 5)
+        params_layout.setSpacing(15)
+
+        # Параметр "От"
         self.phase_min = QDoubleSpinBox()
         self.phase_min.setValue(-540)
         self.phase_min.setRange(-1080, 1080)
         self.phase_min.setDecimals(0)
+        self.phase_min.setFixedWidth(100)
+        self.phase_min.setStyleSheet("font-size: 12px; font-weight: bold;")
 
+        # Параметр "До"
         self.phase_max = QDoubleSpinBox()
         self.phase_max.setValue(540)
         self.phase_max.setRange(-1080, 1080)
         self.phase_max.setDecimals(0)
+        self.phase_max.setFixedWidth(100)
+        self.phase_max.setStyleSheet("font-size: 12px; font-weight: bold;")
 
+        # Параметр "Шаг"
         self.phase_step = QDoubleSpinBox()
         self.phase_step.setValue(10)
         self.phase_step.setRange(0.1, 180)
         self.phase_step.setDecimals(0)
+        self.phase_step.setFixedWidth(100)
+        self.phase_step.setStyleSheet("font-size: 12px; font-weight: bold;")
 
+        # Кнопка построения
         self.btn5 = QPushButton("Построить ДХ")
+        self.btn5.setFixedHeight(30)
+        self.btn5.setFixedWidth(120)
+        self.btn5.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                font-size: 12px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
         self.btn5.clicked.connect(self.start_part5)
 
-        form5.addRow("От (град.):", self.phase_min)
-        form5.addRow("До (град.):", self.phase_max)
-        form5.addRow("Шаг (град.):", self.phase_step)
+        # Добавляем виджеты на панель параметров
+        params_layout.addWidget(QLabel("От (град.):"))
+        params_layout.addWidget(self.phase_min)
+        params_layout.addSpacing(10)
+        params_layout.addWidget(QLabel("До (град.):"))
+        params_layout.addWidget(self.phase_max)
+        params_layout.addSpacing(10)
+        params_layout.addWidget(QLabel("Шаг (град.):"))
+        params_layout.addWidget(self.phase_step)
+        params_layout.addSpacing(20)
+        params_layout.addWidget(self.btn5)
+        params_layout.addStretch()
 
-        layout5.addLayout(form5)
-        layout5.addWidget(self.btn5)
-        layout5.addStretch()
-        params5.setLayout(layout5)
+        params_widget.setLayout(params_layout)
 
-        # --- графики ---
-        graphs5 = QWidget()
-        g5_layout = QVBoxLayout()
+        # Собираем основную компоновку
+        part5_layout.addWidget(self.canvas5, stretch=1)
+        part5_layout.addWidget(self.toolbar5)
+        part5_layout.addWidget(params_widget)
 
-        self.tabs5 = QTabWidget()
-        # self.tab_dh = PlotTab(
-        #     title="Дискриминационная характеристика",
-        #     xlabel="Рассогласование по фазе (градусы)",
-        #     ylabel="Выход дискриминатора"
-        # )
-        self.tab_dh = PlotTab(
-            title="Дискриминационная характеристика",
-            xlabel="Рассогласование по фазе, град.",
-            ylabel=""
-        )
-
-        self.tabs5.addTab(self.tab_dh, "Дискриминационная характеристика")
-        g5_layout.addWidget(self.tabs5)
-        graphs5.setLayout(g5_layout)
-
-        self.part5_tabs.addTab(params5, "Параметры")
-        self.part5_tabs.addTab(graphs5, "Графики")
-
-        part5_layout.addWidget(self.part5_tabs)
         part5_widget.setLayout(part5_layout)
-
         self.main_tabs.addTab(part5_widget, "Часть 5 (Дискриминационная характеристика)")
 
         main_layout.addWidget(self.main_tabs)
@@ -3366,7 +3377,44 @@ class MainWindow(QMainWindow):
         lpf1 = add_block(800, 84, 120, 60, "ФНЧ1")
         lpf2 = add_block(800, 325, 120, 60, "ФНЧ2")
 
-        demod = add_block(800, 10, 120, 60, "Демодулятор")
+        # ===== СПЕЦИАЛЬНАЯ ОБРАБОТКА ДЛЯ БЛОКА demod =====
+        demod_x, demod_y, demod_w, demod_h = 800, 10, 120, 60
+        brush = QtGui.QBrush(QtGui.QColor(255, 255, 255))
+        pen_block = QtGui.QPen(QtCore.Qt.GlobalColor.black)
+        pen_block.setWidth(3)
+        scene.addRect(demod_x, demod_y, demod_w, demod_h, pen_block, brush)
+
+        # Текст для блока demod в три строки с центрированием
+        demod_lines = ["Интегратор", "+", "РУ"]
+        block_font = QtGui.QFont()
+        block_font.setPointSize(11)
+        block_font.setBold(True)
+
+        # Вычисляем общую высоту текста
+        line_heights = []
+        text_items = []
+        for line in demod_lines:
+            t = scene.addSimpleText(line)
+            t.setFont(block_font)
+            t.setBrush(QtGui.QBrush(QtCore.Qt.black))
+            bbox = t.boundingRect()
+            line_heights.append(bbox.height())
+            text_items.append(t)
+
+        # Уменьшаем расстояние между строками до 2 пикселей
+        total_height = sum(line_heights) + 4  # 4 пикселя отступов между строками (было 6)
+        start_y = demod_y + (demod_h - total_height) / 2
+
+        # Размещаем каждую строку с минимальным расстоянием
+        current_y = start_y
+        for i, t in enumerate(text_items):
+            bbox = t.boundingRect()
+            t.setPos(demod_x + (demod_w - bbox.width()) / 2, current_y)
+            # Уменьшаем расстояние между строками до 1-2 пикселей
+            current_y += line_heights[i] + 1  # 1 пиксель между строками (было 3)
+
+        demod = (demod_x, demod_y, demod_w, demod_h)
+        # ===== КОНЕЦ СПЕЦИАЛЬНОЙ ОБРАБОТКИ =====
 
         vco = add_block(610, 200, 120, 60, "ГУН")
 
@@ -4495,8 +4543,14 @@ class MainWindow(QMainWindow):
 
     def update_part5(self, data):
         """Обновляет график дискриминационной характеристики"""
-        self.tab_dh.plot(data["phase_diff"], data["output"],
-                         color='blue', linewidth=1.5)
+        self.ax5.clear()
+        self.ax5.plot(data["phase_diff"], data["output"], color='blue', linewidth=1.5)
+        self.ax5.set_title("Дискриминационная характеристика", fontsize=14)
+        self.ax5.set_xlabel("Рассогласование по фазе, град.", fontsize=12)
+        self.ax5.set_ylabel("Выход дискриминатора", fontsize=12)
+        self.ax5.grid(True, alpha=0.3)
+        self.canvas5.draw()
+
         # Закрываем прогресс-бар
         if hasattr(self, 'progress_dialog'):
             self.progress_dialog.close()
