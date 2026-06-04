@@ -8,7 +8,7 @@ from PySide6 import QtWidgets, QtGui, QtCore
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QDoubleSpinBox
 from scipy.signal import correlate
 import math
 from scipy.signal import welch, savgol_filter
@@ -676,26 +676,25 @@ class ChannelParamsWidget(QWidget):
         # Создаем чекбокс
         self.noise = QCheckBox()
 
-
-        self.ebn0 = QDoubleSpinBox()
+        self.ebn0 = SmartDoubleSpinBox()
         self.ebn0.setRange(-10, 10)
         self.ebn0.setValue(30)
         self.ebn0.setDecimals(1)
-        self.ebn0.setSuffix(" дБ")
+        # self.ebn0.setSuffix(" дБ")  # Убираем суффикс
         self.ebn0.setToolTip("Отношение сигнал/шум на бит (Eb/N0)")
 
         # Строка с надписью "Добавить шум" и чекбоксом справа
         grid.addWidget(QLabel("Добавить шум:"), 0, 0)  # Текст
         grid.addWidget(self.noise, 0, 1)  # Чекбокс справа от текста
 
-        # Создаем дробь с горизонтальной чертой и двоеточием посередине
+        # Создаем дробь с горизонтальной чертой, запятой, дБ и двоеточием
         fraction_label = QLabel()
         fraction_label.setTextFormat(QtCore.Qt.RichText)
         fraction_label.setText("""
         <table border="0" cellpadding="0" cellspacing="0">
             <tr>
                 <td align="center" style="vertical-align: middle;">E<sub>b</sub></td>
-                <td rowspan="3" style="vertical-align: middle; padding-left: 2px;">:</td>
+                <td rowspan="3" style="vertical-align: middle; padding-left: 5px;">, дБ: </td>  <!-- Запятая, дБ и двоеточие -->
             </tr>
             <tr>
                 <td align="center"><hr style="margin:0; padding:0; height:2px; background-color:black;"></td>
@@ -729,6 +728,95 @@ class ChannelParamsWidget(QWidget):
         return {'add_noise': True, 'mode': mode, 'value': value}
 
 
+class SmartDoubleSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox который позволяет вводить дробные значения, но показывает целые без .00"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDecimals(6)  # Разрешаем до 6 знаков для ввода
+        self.setSingleStep(1.0)
+
+        # Отключаем автоматическое форматирование
+        self.setKeyboardTracking(False)
+
+    def textFromValue(self, value):
+        """Переопределяем метод отображения значения"""
+        # Если значение целое - показываем без десятичных знаков
+        if abs(value - round(value)) < 0.000001:
+            return str(int(round(value)))
+        else:
+            # Показываем с минимально необходимым количеством знаков
+            text = f"{value:.6f}".rstrip('0').rstrip('.')
+            return text
+
+    def valueFromText(self, text):
+        """Преобразует текст в значение"""
+        try:
+            # Заменяем запятую на точку если пользователь ввел с запятой
+            text = text.replace(',', '.')
+            return float(text)
+        except ValueError:
+            return 0.0
+
+    def validate(self, text, pos):
+        """Проверяет корректность вводимого текста"""
+        # Разрешаем ввод цифр, точки, запятой, минуса
+        valid_chars = set('0123456789.,-')
+        if all(c in valid_chars for c in text) or text == '':
+            # Проверяем что не более одной точки/запятой
+            decimal_count = text.count('.') + text.count(',')
+            if decimal_count <= 1:
+                # Проверяем что минус только в начале
+                if text.count('-') <= 1 and (text.count('-') == 0 or text[0] == '-'):
+                    # В PySide6 нужно использовать QValidator.State
+                    from PySide6.QtGui import QValidator
+                    return (QValidator.State.Acceptable, text, pos)
+        from PySide6.QtGui import QValidator
+        return (QValidator.State.Invalid, text, pos)
+
+    def fixup(self, text):
+        """Исправляет некорректный ввод"""
+        # Заменяем запятую на точку
+        text = text.replace(',', '.')
+        # Удаляем лишние символы
+        filtered = ''.join(c for c in text if c in '0123456789.-')
+        if filtered and filtered[0] == '.':
+            filtered = '0' + filtered
+        if filtered and filtered[-1] == '.':
+            filtered = filtered[:-1]
+        try:
+            if filtered and filtered != '-':
+                val = float(filtered)
+                self.setValue(val)
+            else:
+                self.setValue(0.0)
+        except ValueError:
+            self.setValue(0.0)
+        self._format_value()
+
+    def _format_value(self):
+        """Форматирует значение при завершении редактирования"""
+        value = self.value()
+        formatted = self.textFromValue(value)
+        if self.lineEdit().text() != formatted:
+            self.lineEdit().setText(formatted)
+
+    def stepBy(self, steps):
+        """При шаге меняем шаг если нужно"""
+        current = self.value()
+        if abs(current - round(current)) < 0.000001:
+            self.setSingleStep(1.0)
+        else:
+            self.setSingleStep(0.1)
+        super().stepBy(steps)
+        self._format_value()
+
+    def focusOutEvent(self, event):
+        """При потере фокуса форматируем"""
+        super().focusOutEvent(event)
+        self._format_value()
+
+
 class SystemParamsWidget(QWidget):
     """Виджет для системных параметров"""
     paramsChanged = Signal()
@@ -740,29 +828,22 @@ class SystemParamsWidget(QWidget):
         group = QGroupBox("Системные параметры")
         grid = QGridLayout()
 
-        self.Fs = QDoubleSpinBox()
+        # Используем кастомный спинбокс
+        self.Fs = SmartDoubleSpinBox()
         self.Fs.setRange(1000, 100000)
         self.Fs.setValue(20000)
-        self.Fs.setDecimals(0)
-        # self.Fs.setSuffix(" Гц")
 
-        self.Fc = QDoubleSpinBox()
+        self.Fc = SmartDoubleSpinBox()
         self.Fc.setRange(100, 5000)
         self.Fc.setValue(1000)
-        self.Fc.setDecimals(0)
-        # self.Fc.setSuffix(" Гц")
 
-        self.bits_per_second = QDoubleSpinBox()
+        self.bits_per_second = SmartDoubleSpinBox()
         self.bits_per_second.setRange(1, 1000)
         self.bits_per_second.setValue(50)
-        self.bits_per_second.setDecimals(0)
-        # self.bits_per_second.setSuffix(" бит/с")
 
-        self.T = QDoubleSpinBox()
+        self.T = SmartDoubleSpinBox()
         self.T.setRange(0.1, 10000)
         self.T.setValue(10)
-        self.T.setDecimals(0)
-        # self.T.setSuffix(" с")
 
         grid.addWidget(QLabel("Скорость передачи, бит/с:"), 0, 0)
         grid.addWidget(self.bits_per_second, 0, 1)
@@ -778,7 +859,7 @@ class SystemParamsWidget(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
-        # В конце __init__ метода SystemParamsWidget добавьте:
+        # Подключаем сигналы
         self.Fs.valueChanged.connect(self.paramsChanged.emit)
         self.Fc.valueChanged.connect(self.paramsChanged.emit)
         self.bits_per_second.valueChanged.connect(self.paramsChanged.emit)
@@ -979,27 +1060,27 @@ class PLLParamsWidget(QWidget):
         group = QGroupBox("Параметры СВН")
         grid = QGridLayout()
 
-        self.Gp = QDoubleSpinBox()
+        self.Gp = SmartDoubleSpinBox()
         self.Gp.setRange(0.1, 10)
         self.Gp.setValue(1)
         self.Gp.setSingleStep(0.1)
         self.Gp.setDecimals(0)
 
-        self.Sr = QDoubleSpinBox()
+        self.Sr = SmartDoubleSpinBox()
         self.Sr.setRange(1, 100)
         self.Sr.setValue(10)
         self.Sr.setSingleStep(1)
         self.Sr.setDecimals(0)
         # self.Sr.setSuffix(" Гц/В")
 
-        self.T_lf = QDoubleSpinBox()
+        self.T_lf = SmartDoubleSpinBox()
         self.T_lf.setRange(0.001, 1)
         self.T_lf.setValue(0.01)
         self.T_lf.setSingleStep(0.001)
         self.T_lf.setDecimals(2)
         # self.T_lf.setSuffix(" с")
 
-        self.delay_deg = QDoubleSpinBox()
+        self.delay_deg = SmartDoubleSpinBox()
         self.delay_deg.setRange(0, 180)
         self.delay_deg.setValue(42)
         self.delay_deg.setDecimals(0)
@@ -2169,14 +2250,24 @@ class GlobalParamsWidget(QWidget):
 
         # ДОБАВИТЬ НОВЫЙ ВИДЖЕТ - Режим несущей
         self.carrier_widget = QWidget()
-        carrier_layout = QVBoxLayout()
-        self.carrier_only = QCheckBox("Только несущая (без модуляции)")
+        carrier_layout = QVBoxLayout()  # Вертикальный для общего размещения
+        container_layout = QHBoxLayout()  # Горизонтальный для надписи и чекбокса
+
+        self.carrier_only = QCheckBox()
         self.carrier_only.setToolTip("При включении передается чистая несущая, ПСП игнорируется")
-        self.carrier_only.setStyleSheet("QCheckBox { font-size: 14px; font-weight: bold; color: #2196F3; }")
-        carrier_layout.addWidget(self.carrier_only)
-        carrier_layout.addStretch()
+
+        label = QLabel("Немодулированная несущая:")
+        label.setStyleSheet("font-size: 14px; font-weight: bold;")
+
+        container_layout.addWidget(label)
+        container_layout.addWidget(self.carrier_only)
+        container_layout.addStretch()  # Растяжение, чтобы прижать к левому краю
+
+        carrier_layout.addLayout(container_layout)
+        carrier_layout.addStretch()  # Растяжение, чтобы прижать к верху
+
         self.carrier_widget.setLayout(carrier_layout)
-        self.params_tabs.addTab(self.carrier_widget, "Режим несущей")
+        self.params_tabs.addTab(self.carrier_widget, "Немодулированная несущая")
 
         # НОВАЯ ВКЛАДКА - Диапазоны параметров
         self.ranges_table = RangesTableWidget(self)  # Передаем self как parent
@@ -2256,22 +2347,22 @@ class MainWindow(QMainWindow):
 
         self.graphs_tabs = QTabWidget()
 
-        self.tab_psp = PlotTab("ПСП", "Время, с", "")
+        self.tab_psp = PlotTab("Информационная ПСП", "Время, с", "")
         self.tab_bpsk = PlotTab("2ФМ сигнал", "Время, с", "")
         self.tab_noisy = PlotTab("Процесс на выходе канала", "Время, с", "")
-        self.tab_spec1 = PlotTab("СПМ процесса на выходе канала", "Частота, Гц", "")
+        self.tab_spec1 = PlotTab("СПМ процесса на выходе канала, дБ", "Частота, Гц", "")
         self.tab_filtered = PlotTab("Процесс на выходе ПФ", "Время, с", "")
-        self.tab_spec2 = PlotTab("СПМ процесса на выходе ПФ", "Частота, Гц", "")
-        self.tab_out = PlotTabWithCheckbox("ПСП на выходе демодулятора", "Время, с", "")
+        self.tab_spec2 = PlotTab("СПМ процесса на выходе ПФ, дБ", "Частота, Гц", "")
+        self.tab_out = PlotTabWithCheckbox("Оценка ПСП на выходе демодулятора", "Время, с", "")
         self.tab_compare = PlotTab("Сравнение ПСП", "Время, с", "", subplots=2)
 
-        self.graphs_tabs.addTab(self.tab_psp, "ПСП")
+        self.graphs_tabs.addTab(self.tab_psp, "Информационная ПСП")
         self.graphs_tabs.addTab(self.tab_bpsk, "2ФМ сигнал")
         self.graphs_tabs.addTab(self.tab_noisy, "Процесс на выходе канала")
         self.graphs_tabs.addTab(self.tab_spec1, "СПМ процесса на выходе канала")
         self.graphs_tabs.addTab(self.tab_filtered, "Процесс на выходе ПФ")
         self.graphs_tabs.addTab(self.tab_spec2, "СПМ процесса на выходе ПФ")
-        self.graphs_tabs.addTab(self.tab_out, "ПСП на выходе демодулятора")
+        self.graphs_tabs.addTab(self.tab_out, "Оценка ПСП на выходе демодулятора")
         # self.graphs_tabs.addTab(self.tab_compare, "Сравнение входной и выходной ПСП (часть 1)")
 
         graphs_layout.addWidget(self.graphs_tabs)
@@ -2326,8 +2417,8 @@ class MainWindow(QMainWindow):
         self.tabs2 = QTabWidget()
 
         # НОВАЯ ВКЛАДКА - ПСП (в начало)
-        self.tab_psp2 = PlotTab("ПСП (часть 2)", "Время, с", "")
-        self.tabs2.addTab(self.tab_psp2, "ПСП")
+        self.tab_psp2 = PlotTab("Информационная ПСП", "Время, с", "")
+        self.tabs2.addTab(self.tab_psp2, "Информационная ПСП")
 
 
 
@@ -2352,16 +2443,16 @@ class MainWindow(QMainWindow):
         #     subplots=2
         # )
         # НОВАЯ ВКЛАДКА - ПСП на выходе демодулятора (точки)
-        self.tab_demod_out2 = PlotTabWithCheckbox("ПСП на выходе демодулятора", "Время, с", "")
+        self.tab_demod_out2 = PlotTabWithCheckbox("Информационная ПСП", "Время, с", "")
         self.tabs2.addTab(self.tab_mul_sin, "Выход перемножителя (Синф.)")
         self.tabs2.addTab(self.tab_mul_cos, "Выход перемножителя (Кв.)")
-        self.tabs2.addTab(self.tab_spec_mul, "СПМ процесса на выходе перемножителей")
+        self.tabs2.addTab(self.tab_spec_mul, "Выход перемножителей (СПМ)")
         self.tabs2.addTab(self.tab_lpf_sin, "Выход ФНЧ (Синф.)")
         self.tabs2.addTab(self.tab_lpf_cos, "Выход ФНЧ (Кв.)")
-        self.tabs2.addTab(self.tab_spec_lpf, "СПМ процесса на выходе ФНЧ")
+        self.tabs2.addTab(self.tab_spec_lpf, "Выход ФНЧ (СПМ)")
         self.tabs2.addTab(self.tab_phase, "Реализация на выходе ФД")
         # ПОСЛЕДНЯЯ вкладка - ПСП на выходе демодулятора
-        self.tabs2.addTab(self.tab_demod_out2, "ПСП на выходе демодулятора")
+        self.tabs2.addTab(self.tab_demod_out2, "Оценка ПСП на выходе демодулятора")
         # self.tabs2.addTab(self.tab_compare2, "Сравнение входной и выходной ПСП")
 
         graphs2_layout.addWidget(self.tabs2)
@@ -2423,19 +2514,32 @@ class MainWindow(QMainWindow):
         self.tabs3 = QTabWidget()
 
         # НОВЫЕ ВКЛАДКИ ДЛЯ ЧАСТИ 3
-        self.tab_psp3 = PlotTab("ПСП (входная)", "Время, с", "")
-        self.tabs3.addTab(self.tab_psp3, "ПСП входная")
+        self.tab_psp3 = PlotTab("Информационная ПСП", "Время, с", "")
+        self.tabs3.addTab(self.tab_psp3, "Информационная ПСП")
 
-        self.tab_demod_out3 = PlotTabWithCheckbox("ПСП на выходе демодулятора", "Время, с", "")
+        self.tab_demod_out3 = PlotTabWithCheckbox("Оценка ПСП на выходе демодулятора", "Время, с", "")
 
-
-        # Вкладка с двумя графиками ФНЧ (один под другим)
         self.tab_lpf_combined = PlotTab(
-            title="Реализация на выходе ФНЧ",
-            xlabel="Время, с",
+            title="",  # Убираем общий заголовок
+            xlabel="",  # Убираем общий xlabel (будет установлен для каждого подграфика отдельно)
             ylabel="",
             subplots=2
         )
+
+        # Настройка осей для каждого подграфика отдельно
+        # Верхний график (ax_index=0) - синфазный канал
+        self.tab_lpf_combined.ax[0].set_title("Реализация на выходе ФНЧ (Синфазный канал)", fontsize=12)
+        self.tab_lpf_combined.ax[0].set_xlabel("Время, с", fontsize=10)
+        self.tab_lpf_combined.ax[0].set_ylabel("", fontsize=10)
+        self.tab_lpf_combined.ax[0].grid(True, alpha=0.3)
+
+        # Нижний график (ax_index=1) - квадратурный канал
+        self.tab_lpf_combined.ax[1].set_title("Реализация на выходе ФНЧ (Квадратурный канал)", fontsize=12)
+        self.tab_lpf_combined.ax[1].set_xlabel("Время, с", fontsize=10)
+        self.tab_lpf_combined.ax[1].set_ylabel("", fontsize=10)
+        self.tab_lpf_combined.ax[1].grid(True, alpha=0.3)
+
+
 
         # Отдельные вкладки для остальных графиков
         self.tab_phase3 = PlotTab("Реализация на выходе ФД")
@@ -2443,7 +2547,7 @@ class MainWindow(QMainWindow):
 
         self.tabs3.addTab(self.tab_lpf_combined, "Выход ФНЧ (Синф. и Кв.)")
         self.tabs3.addTab(self.tab_phase3, "Реализация на выходе ФД")
-        self.tabs3.addTab(self.tab_demod_out3, "ПСП на выходе демодулятора")
+        self.tabs3.addTab(self.tab_demod_out3, "Оценка ПСП на выходе демодулятора")
         self.tabs3.addTab(self.tab_vco_spec, "СПМ на выходе ГУН (без переходного процесса)")
 
 
@@ -2461,8 +2565,8 @@ class MainWindow(QMainWindow):
         control3_widget.setFixedHeight(80)  # Увеличиваем высоту
         control3_layout = QHBoxLayout()
 
-        self.dphi = QDoubleSpinBox()
-        self.dphi.setRange(-360, 360)  # Расширен диапазон
+        self.dphi = SmartDoubleSpinBox()
+        self.dphi.setRange(-1080, 1080)  # Расширен диапазон
         self.dphi.setValue(0)
         self.dphi.setFixedWidth(100)
         self.dphi.setSingleStep(1)  # Шаг 1 градус
@@ -2472,7 +2576,7 @@ class MainWindow(QMainWindow):
         self.btn3.setFixedWidth(170)  # Такой же как у btn_psd
         self.btn3.clicked.connect(self.start_part3)
 
-        self.transition = QDoubleSpinBox()
+        self.transition = SmartDoubleSpinBox()
         self.transition.setRange(0, 10000)
         self.transition.setValue(0.5)
         self.transition.setSingleStep(0.5)
@@ -2536,19 +2640,27 @@ class MainWindow(QMainWindow):
         self.tabs4 = QTabWidget()
 
         # НОВЫЕ ВКЛАДКИ ДЛЯ ЧАСТИ 4
-        self.tab_psp4 = PlotTab("ПСП (входная)", "Время, с", "")
-        self.tabs4.addTab(self.tab_psp4, "ПСП входная")
+        self.tab_psp4 = PlotTab("Информационная ПСП", "Время, с", "")
+        self.tabs4.addTab(self.tab_psp4, "Информационная ПСП")
 
-        self.tab_demod_out4 = PlotTabWithCheckbox("ПСП на выходе демодулятора", "Время, с", "")
-
+        self.tab_demod_out4 = PlotTabWithCheckbox("Оценка ПСП на выходе демодулятора", "Время, с", "")
 
         # Вкладка с двумя графиками ФНЧ (один под другим)
-        self.tab4_lpf_combined = PlotTab(
-            title="Реализация на выходе ФНЧ",
-            xlabel="Время, с",
+        self.tab4_lpf_combined = PlotTab(  # ← ИЗМЕНЕНО: другое имя переменной
+            title="",  # Убираем общий заголовок
+            xlabel="",  # Убираем общий xlabel
             ylabel="",
             subplots=2
         )
+
+        # Настройка осей для каждого подграфика отдельно
+        self.tab4_lpf_combined.ax[0].set_title("Реализация на выходе ФНЧ (Синфазный канал)", fontsize=12)
+        self.tab4_lpf_combined.ax[0].set_xlabel("Время, с", fontsize=10)
+        self.tab4_lpf_combined.ax[0].grid(True, alpha=0.3)
+
+        self.tab4_lpf_combined.ax[1].set_title("Реализация на выходе ФНЧ (Квадратурный канал)", fontsize=12)
+        self.tab4_lpf_combined.ax[1].set_xlabel("Время, с", fontsize=10)
+        self.tab4_lpf_combined.ax[1].grid(True, alpha=0.3)
 
         # Отдельные вкладки для остальных графиков
         self.tab4_phase = PlotTab("Реализация на выходе ФД")
@@ -2556,7 +2668,7 @@ class MainWindow(QMainWindow):
 
         self.tabs4.addTab(self.tab4_lpf_combined, "Выход ФНЧ (Синф. и Кв.)")
         self.tabs4.addTab(self.tab4_phase, "Реализация на выходе ФД")
-        self.tabs4.addTab(self.tab_demod_out4, "ПСП на выходе демодулятора")
+        self.tabs4.addTab(self.tab_demod_out4, "Оценка ПСП на выходе демодулятора")
         self.tabs4.addTab(self.tab4_spec, "СПМ на выходе ГУН (без переходного процесса)")
 
 
@@ -2569,7 +2681,7 @@ class MainWindow(QMainWindow):
         control4_widget.setFixedHeight(80)
         control4_layout = QHBoxLayout()
 
-        self.freq_offset = QDoubleSpinBox()
+        self.freq_offset = SmartDoubleSpinBox()
         self.freq_offset.setRange(-500, 500)
         self.freq_offset.setValue(0)
         self.freq_offset.setFixedWidth(100)
@@ -2579,7 +2691,7 @@ class MainWindow(QMainWindow):
         self.btn4.setFixedWidth(170)  # Такой же как у btn_psd4
         self.btn4.clicked.connect(self.start_part4)
 
-        self.transition4 = QDoubleSpinBox()
+        self.transition4 = SmartDoubleSpinBox()
         self.transition4.setRange(0, 10000)
         self.transition4.setValue(0.5)
         self.transition4.setSingleStep(0.5)
@@ -2656,7 +2768,7 @@ class MainWindow(QMainWindow):
         self.ax5 = self.figure5.add_subplot(111)
         self.ax5.set_title("Дискриминационная характеристика", fontsize=14)
         self.ax5.set_xlabel("Рассогласование по фазе, град.", fontsize=12)
-        self.ax5.set_ylabel("Выход дискриминатора", fontsize=12)
+        self.ax5.set_ylabel("", fontsize=12)
         self.ax5.grid(True, alpha=0.3)
 
         # Тулбар для графика
@@ -2670,7 +2782,7 @@ class MainWindow(QMainWindow):
         params_layout.setSpacing(15)
 
         # Параметр "От"
-        self.phase_min = QDoubleSpinBox()
+        self.phase_min = SmartDoubleSpinBox()
         self.phase_min.setValue(-540)
         self.phase_min.setRange(-1080, 1080)
         self.phase_min.setDecimals(0)
@@ -2678,7 +2790,7 @@ class MainWindow(QMainWindow):
         self.phase_min.setStyleSheet("font-size: 12px; font-weight: bold;")
 
         # Параметр "До"
-        self.phase_max = QDoubleSpinBox()
+        self.phase_max = SmartDoubleSpinBox()
         self.phase_max.setValue(540)
         self.phase_max.setRange(-1080, 1080)
         self.phase_max.setDecimals(0)
@@ -2686,7 +2798,7 @@ class MainWindow(QMainWindow):
         self.phase_max.setStyleSheet("font-size: 12px; font-weight: bold;")
 
         # Параметр "Шаг"
-        self.phase_step = QDoubleSpinBox()
+        self.phase_step = SmartDoubleSpinBox()
         self.phase_step.setValue(10)
         self.phase_step.setRange(0.1, 180)
         self.phase_step.setDecimals(0)
@@ -2741,23 +2853,23 @@ class MainWindow(QMainWindow):
 
     def _get_part1_graphs(self):
         return [
-            ("ПСП", lambda: ("ПСП", self.last_part1_data["t"], self.last_part1_data["psp"], "line", "Время, с", "")),
+            ("Информационная ПСП", lambda: ("Информационная ПСП", self.last_part1_data["t"], self.last_part1_data["psp"], "line", "Время, с", "")),
             ("2ФМ сигнал",
              lambda: ("2ФМ сигнал", self.last_part1_data["t"], self.last_part1_data["bpsk"], "line", "Время, с", "")),
             ("Процесс на выходе канала",
              lambda: ("Процесс на выходе канала", self.last_part1_data["t"], self.last_part1_data["noisy"], "line",
                       "Время, с", "")),
-            ("СПМ на выходе канала", lambda: ("СПМ на выходе канала", self.last_part1_data["f1"], 10 * np.log10(
+            ("СПМ процесса на выходе канала", lambda: ("СПМ процесса на выходе канала", self.last_part1_data["f1"], 10 * np.log10(
                 np.where(self.last_part1_data["pxx1"] <= 0, 1e-12, self.last_part1_data["pxx1"])), "line",
                                               "Частота, Гц", "дБ")),
             ("Процесс на выходе ПФ",
              lambda: ("Процесс на выходе ПФ", self.last_part1_data["t"], self.last_part1_data["filtered"], "line",
                       "Время, с", "")),
-            ("СПМ на выходе ПФ", lambda: ("СПМ на выходе ПФ", self.last_part1_data["f2"], 10 * np.log10(
+            ("СПМ процесса на выходе ПФ", lambda: ("СПМ процесса на выходе ПФ", self.last_part1_data["f2"], 10 * np.log10(
                 np.where(self.last_part1_data["pxx2"] <= 0, 1e-12, self.last_part1_data["pxx2"])), "line",
                                           "Частота, Гц", "дБ")),
-            ("ПСП на выходе демодулятора",
-             lambda: ("ПСП на выходе демодулятора", self.last_part1_data["t_rec"], self.last_part1_data["rec"],
+            ("Оценка ПСП на выходе демодулятора",
+             lambda: ("Оценка ПСП на выходе демодулятора", self.last_part1_data["t_rec"], self.last_part1_data["rec"],
                       "scatter",
                       "Время, с", "")),
             # ("Исходная ПСП (отсчеты)",
@@ -2767,8 +2879,8 @@ class MainWindow(QMainWindow):
 
     def _get_part2_graphs(self):
         return [
-            ("ПСП",
-             lambda: ("ПСП", self.last_part2_data["t"], self.last_part2_data["psp"], "line", "Время, с", "")),
+            ("Информационная ПСП",
+             lambda: ("Информационная ПСП", self.last_part2_data["t"], self.last_part2_data["psp"], "line", "Время, с", "")),
             ("Реализация на выходе ФД",
              lambda: ("Реализация на выходе ФД", self.last_part2_data["t"], self.last_part2_data["phase"], "line",
                       "Время, с", "")),
@@ -2784,37 +2896,37 @@ class MainWindow(QMainWindow):
             ("Выход ФНЧ (Кв.)",
              lambda: ("Выход ФНЧ (Кв.)", self.last_part2_data["t"], self.last_part2_data["lpf_cos"], "line", "Время, с",
                       "")),
-            ("СПМ перемножителя (Синф.)",
-             lambda: ("СПМ перемножителя (Синф.)", self.last_part2_data["f_mul_sin"],
+            ("СПМ на выходе перемножителя (Синф.)",
+             lambda: ("СПМ на выходе перемножителя (Синф.)", self.last_part2_data["f_mul_sin"],
                       10 * np.log10(np.where(self.last_part2_data["pxx_mul_sin"] <= 0, 1e-12,
                                              self.last_part2_data["pxx_mul_sin"])),
                       "line", "Частота, Гц", "дБ")),
-            ("СПМ перемножителя (Кв.)",
-             lambda: ("СПМ перемножителя (Кв.)", self.last_part2_data["f_mul_cos"],
+            ("СПМ на выходе перемножителя (Кв.)",
+             lambda: ("СПМ на выходе перемножителя (Кв.)", self.last_part2_data["f_mul_cos"],
                       10 * np.log10(np.where(self.last_part2_data["pxx_mul_cos"] <= 0, 1e-12,
                                              self.last_part2_data["pxx_mul_cos"])),
                       "line", "Частота, Гц", "дБ")),
-            ("СПМ ФНЧ (Синф.)",
-             lambda: ("СПМ ФНЧ (Синф.)", self.last_part2_data["f_lpf_sin"],
+            ("СПМ на выходе ФНЧ (Синф.)",
+             lambda: ("СПМ на выходе ФНЧ (Синф.)", self.last_part2_data["f_lpf_sin"],
                       10 * np.log10(np.where(self.last_part2_data["pxx_lpf_sin"] <= 0, 1e-12,
                                              self.last_part2_data["pxx_lpf_sin"])),
                       "line", "Частота, Гц", "дБ")),
-            ("СПМ ФНЧ (Кв.)",
-             lambda: ("СПМ ФНЧ (Кв.)", self.last_part2_data["f_lpf_cos"],
+            ("СПМ на выходе ФНЧ (Кв.)",
+             lambda: ("СПМ на выходе ФНЧ (Кв.)", self.last_part2_data["f_lpf_cos"],
                       10 * np.log10(np.where(self.last_part2_data["pxx_lpf_cos"] <= 0, 1e-12,
                                              self.last_part2_data["pxx_lpf_cos"])),
                       "line", "Частота, Гц", "дБ")),
             # ("Входная ПСП (часть 2)",
             #  lambda: ("Входная ПСП", self.last_part2_data["t_rec"], self.last_part2_data["psp_bits"], "step",
             #           "Время, с", "")),
-            ("ПСП на выходе демодулятора",
+            ("Оценка ПСП на выходе демодулятора",
              lambda: ("ПСП на выходе демодулятора", self.last_part2_data["t_rec"], self.last_part2_data["rec"], "scatter",
                       "Время, с", "")),
         ]
 
     def _get_part3_graphs(self):
         return [
-            ("ПСП",
+            ("Информационная ПСП",
              lambda: ("ПСП", self.last_part3_data["t"], self.last_part3_data["psp"], "line", "Время, с", "")),
 
             # ("ПСП на выходе демодулятора (импульсы)",
@@ -2829,14 +2941,14 @@ class MainWindow(QMainWindow):
             ("Реализация на выходе ФД",
              lambda: ("Реализация на выходе ФД", self.last_part3_data["t"], self.last_part3_data["phase"], "line",
                       "Время, с", "")),
-            ("ПСП на выходе демодулятора",
+            ("Оценка ПСП на выходе демодулятора",
              lambda: ("ПСП на выходе демодулятора", self.last_part3_data["t_rec"], self.last_part3_data["rec"], "scatter", "Время, с",
                       "")),
         ]
 
     def _get_part4_graphs(self):
         return [
-            ("ПСП",
+            ("Информационная ПСП",
              lambda: ("ПСП", self.last_part4_data["t"], self.last_part4_data["psp"], "line", "Время, с", "")),
 
             # ("ПСП на выходе демодулятора (импульсы)",
@@ -2851,7 +2963,7 @@ class MainWindow(QMainWindow):
             ("Реализация на выходе ФД",
              lambda: ("Реализация на выходе ФД", self.last_part4_data["t"], self.last_part4_data["phase"], "line",
                       "Время, с", "")),
-            ("ПСП на выходе демодулятора",
+            ("Оценка ПСП на выходе демодулятора",
              lambda: ("ПСП на выходе демодулятора", self.last_part4_data["t_rec"], self.last_part4_data["rec"], "scatter", "Время, с",
                       "")),
         ]
@@ -3118,7 +3230,7 @@ class MainWindow(QMainWindow):
                 name, x, y, plot_type, xlabel, ylabel = psp_input_data
                 color = BLUE_COLOR
                 ax.step(x, y, where='post', color=color, linewidth=2.0, alpha=0.8, label=name)
-                clean_name = name.replace("ПСП", "").strip()
+                clean_name = name
                 if not clean_name:
                     clean_name = name
                 legend_data.append((clean_name, color, 'step'))
@@ -3134,7 +3246,7 @@ class MainWindow(QMainWindow):
                 else:
                     ax.step(x, y, where='post', color=color, linewidth=2.0, alpha=0.8, label=name)
                     plot_type_legend = 'step'
-                clean_name = name.replace("ПСП", "").strip()
+                clean_name = name
                 if not clean_name:
                     clean_name = name
                 legend_data.append((clean_name, color, plot_type_legend))
@@ -3808,7 +3920,7 @@ class MainWindow(QMainWindow):
         # === СПМ перемножителей ===
         self.tab_spec_mul.plot(d["f_mul_cos"], 10 * np.log10(d["pxx_mul_cos"]), ax_index=0)
         ax0 = self.tab_spec_mul.ax[0]
-        ax0.set_title("СПМ на выходе перемножителя квадратурного канала")
+        ax0.set_title("СПМ выход перемножителя квадратурного канала, дБ")
         ax0.set_xlabel("Частота (Гц)")
         ax0.set_ylabel("")
         ax0.set_xlim(0, 3000)
@@ -3816,7 +3928,7 @@ class MainWindow(QMainWindow):
 
         self.tab_spec_mul.plot(d["f_mul_sin"], 10 * np.log10(d["pxx_mul_sin"]), ax_index=1)
         ax1 = self.tab_spec_mul.ax[1]
-        ax1.set_title("СПМ на выходе перемножителя синфазного канала")
+        ax1.set_title("СПМ выход перемножителя синфазного канала, дБ")
         ax1.set_xlabel("Частота (Гц)")
         ax1.set_ylabel("")
         ax1.set_xlim(0, 3000)
@@ -3825,7 +3937,7 @@ class MainWindow(QMainWindow):
         # === СПМ ФНЧ ===
         self.tab_spec_lpf.plot(d["f_lpf_cos"], 10 * np.log10(d["pxx_lpf_cos"]), ax_index=0)
         ax2 = self.tab_spec_lpf.ax[0]
-        ax2.set_title("СПМ выход ФНЧ квадратурного канала")
+        ax2.set_title("СПМ процесса на выходе ФНЧ квадратурного канала, дБ")
         ax2.set_xlabel("Частота (Гц)")
         ax2.set_ylabel("")
         ax2.set_xlim(0, 3000)
@@ -3833,7 +3945,7 @@ class MainWindow(QMainWindow):
 
         self.tab_spec_lpf.plot(d["f_lpf_sin"], 10 * np.log10(d["pxx_lpf_sin"]), ax_index=1)
         ax3 = self.tab_spec_lpf.ax[1]
-        ax3.set_title("СПМ выход ФНЧ синфазного канала")
+        ax3.set_title("СПМ процесса на выходе ФНЧ синфазного канала, дБ")
         ax3.set_xlabel("Частота (Гц)")
         ax3.set_ylabel("")
         ax3.set_xlim(0, 3000)
@@ -3938,15 +4050,24 @@ class MainWindow(QMainWindow):
         # Выходная ПСП (точки/отсчеты)
         self.tab_demod_out3.update_plot(d["t_rec"], d["rec"], label="")
 
-        # Обновляем объединенный график ФНЧ (синфазный и квадратурный)
-        # Верхний график (ax_index=0) - синфазный (sin)
-        # Нижний график (ax_index=1) - квадратурный (cos)
-        self.tab_lpf_combined.plot(d["t"], d["lpf_sin"], ax_index=0, color='red', label="Синфазный канал")
-        self.tab_lpf_combined.plot(d["t"], d["lpf_cos"], ax_index=1, color='blue', label="Квадратурный канал")
+        # === ОБНОВЛЯЕМ ОБЪЕДИНЕННЫЙ ГРАФИК ФНЧ ===
+        # Верхний график - синфазный канал
+        self.tab_lpf_combined.ax[0].clear()
+        self.tab_lpf_combined.ax[0].plot(d["t"], d["lpf_sin"], color='red', linewidth=1.5)
+        self.tab_lpf_combined.ax[0].set_title("Реализация на выходе ФНЧ (Синфазный канал)", fontsize=12)
+        self.tab_lpf_combined.ax[0].set_xlabel("Время, с", fontsize=10)
+        self.tab_lpf_combined.ax[0].grid(True, alpha=0.3)
+        # Без легенды!
 
-        # Добавляем легенды для каждого подграфика
-        self.tab_lpf_combined.ax[0].legend(loc='best', fontsize=10)
-        self.tab_lpf_combined.ax[1].legend(loc='best', fontsize=10)
+        # Нижний график - квадратурный канал
+        self.tab_lpf_combined.ax[1].clear()
+        self.tab_lpf_combined.ax[1].plot(d["t"], d["lpf_cos"], color='blue', linewidth=1.5)
+        self.tab_lpf_combined.ax[1].set_title("Реализация на выходе ФНЧ (Квадратурный канал)", fontsize=12)
+        self.tab_lpf_combined.ax[1].set_xlabel("Время, с", fontsize=10)
+        self.tab_lpf_combined.ax[1].grid(True, alpha=0.3)
+        # Без легенды!
+
+        self.tab_lpf_combined.canvas.draw()
 
         # Обновляем отдельный график ФД
         self.tab_phase3.plot(d["t"], d["phase"])
@@ -4011,8 +4132,8 @@ class MainWindow(QMainWindow):
 
         # Настраиваем подписи осей
         self.tab_vco_spec.ax.set_xlabel("Частота, Гц", fontsize=12)
-        self.tab_vco_spec.ax.set_ylabel("Спектральная плотность, дБ", fontsize=12)
-        self.tab_vco_spec.ax.set_title("СПМ на выходе ГУН (без переходного процесса)", fontsize=14)
+        self.tab_vco_spec.ax.set_ylabel("", fontsize=12)
+        self.tab_vco_spec.ax.set_title("СПМ на выходе ГУН (без переходного процесса), дБ", fontsize=14)
         self.tab_vco_spec.ax.grid(True, alpha=0.3)
 
         # Обновляем canvas
@@ -4406,15 +4527,22 @@ class MainWindow(QMainWindow):
         if "rec" in d and "t_rec" in d:
             self.tab_demod_out4.update_plot(d["t_rec"], d["rec"], label="")
 
-        # Обновляем объединенный график ФНЧ
-        self.tab4_lpf_combined.plot(d["t"], d["lpf_sin"], ax_index=0, color='red', label="Синфазный канал")
-        self.tab4_lpf_combined.plot(d["t"], d["lpf_cos"], ax_index=1, color='blue', label="Квадратурный канал")
+            # Обновляем объединенный график ФНЧ - ИСПОЛЬЗУЕМ tab4_lpf_combined
+            self.tab4_lpf_combined.ax[0].clear()
+            self.tab4_lpf_combined.ax[0].plot(d["t"], d["lpf_sin"], color='red', linewidth=1.5)
+            self.tab4_lpf_combined.ax[0].set_title("Реализация на выходе ФНЧ (Синфазный канал)", fontsize=12)
+            self.tab4_lpf_combined.ax[0].set_xlabel("Время, с", fontsize=10)
+            self.tab4_lpf_combined.ax[0].grid(True, alpha=0.3)
+            # Без легенды!
 
-        self.tab4_lpf_combined.ax[0].legend(loc='best', fontsize=10)
-        self.tab4_lpf_combined.ax[1].legend(loc='best', fontsize=10)
+            self.tab4_lpf_combined.ax[1].clear()
+            self.tab4_lpf_combined.ax[1].plot(d["t"], d["lpf_cos"], color='blue', linewidth=1.5)
+            self.tab4_lpf_combined.ax[1].set_title("Реализация на выходе ФНЧ (Квадратурный канал)", fontsize=12)
+            self.tab4_lpf_combined.ax[1].set_xlabel("Время, с", fontsize=10)
+            self.tab4_lpf_combined.ax[1].grid(True, alpha=0.3)
+            # Без легенды!
 
-        # Обновляем отдельный график ФД
-        self.tab4_phase.plot(d["t"], d["phase"])
+            self.tab4_lpf_combined.canvas.draw()
 
         # Отображение ошибок и BER
         if "errors" in d and "ber" in d:
@@ -4495,8 +4623,8 @@ class MainWindow(QMainWindow):
             self.tab4_spec.ax.clear()
             self.tab4_spec.ax.plot(f, Pxx_db, color='blue', linewidth=1.5)
             self.tab4_spec.ax.set_xlabel("Частота, Гц", fontsize=12)
-            self.tab4_spec.ax.set_ylabel("Спектральная плотность, дБ", fontsize=12)
-            self.tab4_spec.ax.set_title("СПМ на выходе ГУН (без переходного процесса)", fontsize=14)
+            self.tab4_spec.ax.set_ylabel("", fontsize=12)
+            self.tab4_spec.ax.set_title("СПМ на выходе ГУН (без переходного процесса), дБ", fontsize=14)
             self.tab4_spec.ax.grid(True, alpha=0.3)
             self.tab4_spec.canvas.draw()
 
@@ -4547,7 +4675,7 @@ class MainWindow(QMainWindow):
         self.ax5.plot(data["phase_diff"], data["output"], color='blue', linewidth=1.5)
         self.ax5.set_title("Дискриминационная характеристика", fontsize=14)
         self.ax5.set_xlabel("Рассогласование по фазе, град.", fontsize=12)
-        self.ax5.set_ylabel("Выход дискриминатора", fontsize=12)
+        self.ax5.set_ylabel("", fontsize=12)
         self.ax5.grid(True, alpha=0.3)
         self.canvas5.draw()
 
