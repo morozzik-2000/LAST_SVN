@@ -677,7 +677,7 @@ class ChannelParamsWidget(QWidget):
         self.noise = QCheckBox()
 
         self.ebn0 = SmartDoubleSpinBox()
-        self.ebn0.setRange(-10, 10)
+        self.ebn0.setRange(-100, 100)
         self.ebn0.setValue(30)
         self.ebn0.setDecimals(1)
         # self.ebn0.setSuffix(" дБ")  # Убираем суффикс
@@ -1061,27 +1061,27 @@ class PLLParamsWidget(QWidget):
         grid = QGridLayout()
 
         self.Gp = SmartDoubleSpinBox()
-        self.Gp.setRange(0.1, 10)
+        self.Gp.setRange(0.1, 10000)
         self.Gp.setValue(1)
         self.Gp.setSingleStep(0.1)
         self.Gp.setDecimals(0)
 
         self.Sr = SmartDoubleSpinBox()
-        self.Sr.setRange(1, 100)
+        self.Sr.setRange(1, 10000)
         self.Sr.setValue(10)
         self.Sr.setSingleStep(1)
         self.Sr.setDecimals(0)
         # self.Sr.setSuffix(" Гц/В")
 
         self.T_lf = SmartDoubleSpinBox()
-        self.T_lf.setRange(0.001, 1)
+        self.T_lf.setRange(0.000001, 10000)
         self.T_lf.setValue(0.01)
         self.T_lf.setSingleStep(0.001)
         self.T_lf.setDecimals(2)
         # self.T_lf.setSuffix(" с")
 
         self.delay_deg = SmartDoubleSpinBox()
-        self.delay_deg.setRange(0, 180)
+        self.delay_deg.setRange(-1080, 1080)
         self.delay_deg.setValue(42)
         self.delay_deg.setDecimals(0)
         # self.delay_deg.setSuffix(" °")
@@ -1106,14 +1106,228 @@ class PLLParamsWidget(QWidget):
         self.delay_deg.valueChanged.connect(self.paramsChanged.emit)
 
 
+# class Worker(QThread):
+#     finished = Signal(dict)
+#
+#     def __init__(self, T, Fs, Fc, bits_per_second,
+#                  filter_type, order_mode, filter_order,
+#                  Wp_low, Wp_high, Ws_low, Ws_high,
+#                  gpass, gstop, Gp, Sr, T_lf, delay_deg,
+#                  noise_params, carrier_only):
+#         super().__init__()
+#         self.T = T
+#         self.Fs = Fs
+#         self.Fc = Fc
+#         self.bits_per_second = bits_per_second
+#         self.filter_type = filter_type
+#         self.order_mode = order_mode
+#         self.filter_order = filter_order
+#         self.Wp_low = Wp_low
+#         self.Wp_high = Wp_high
+#         self.Ws_low = Ws_low
+#         self.Ws_high = Ws_high
+#         self.gpass = gpass
+#         self.gstop = gstop
+#         self.Gp = Gp
+#         self.Sr = Sr
+#         self.T_lf = T_lf
+#         self.delay_deg = delay_deg
+#         self.noise_params = noise_params
+#         self.carrier_only = carrier_only
+#
+#     def run(self):
+#         Ts = 1 / self.Fs
+#         t = np.arange(0, self.T, Ts)
+#
+#         num_bits = int(self.T * self.bits_per_second)
+#
+#         # === ПСП ===
+#         bits = np.random.randint(0, 2, num_bits)
+#         bits = np.where(bits == 0, -1, 1)
+#         psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
+#
+#         # === BPSK ===
+#         if self.carrier_only:
+#             signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
+#         else:
+#             signal_bpsk = np.cos(2 * np.pi * self.Fc * t + (psp + 1) / 2 * np.pi)
+#
+#         # === ШУМ ===
+#         if self.noise_params['add_noise']:
+#             P = np.mean(signal_bpsk ** 2)
+#
+#             if self.noise_params['mode'] == 'ebn0':
+#                 SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
+#             else:
+#                 SNR = self.noise_params['value']
+#
+#             noise_power = P / (10 ** (SNR / 10))
+#             noise = np.sqrt(noise_power) * np.random.randn(len(t))
+#             noisy = signal_bpsk + noise
+#         else:
+#             noisy = signal_bpsk
+#
+#         # === ФИЛЬТР ===
+#         Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
+#         Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
+#
+#         if self.order_mode == 1:
+#             N = self.filter_order
+#             Wn = Wp_norm
+#
+#             if self.filter_type == "ellip":
+#                 b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+#             elif self.filter_type == "butter":
+#                 b, a = signal.butter(N, Wn, btype='band')
+#             elif self.filter_type == "cheby1":
+#                 b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+#             elif self.filter_type == "cheby2":
+#                 b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+#             else:
+#                 b, a = signal.bessel(N, Wn, btype='band', norm='phase')
+#         else:
+#             if self.filter_type == "ellip":
+#                 N, Wn = signal.ellipord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+#                 b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+#             elif self.filter_type == "butter":
+#                 N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+#                 b, a = signal.butter(N, Wn, btype='band')
+#             elif self.filter_type == "cheby1":
+#                 N, Wn = signal.cheby1ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+#                 b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+#             elif self.filter_type == "cheby2":
+#                 N, Wn = signal.cheby2ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+#                 b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+#             else:
+#                 N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+#                 b, a = signal.bessel(N, Wn, btype='band', norm='phase')
+#
+#         filtered = signal.lfilter(b, a, noisy)
+#
+#         # === PLL ===
+#         F_vco = self.Fc
+#         delay = np.deg2rad(self.delay_deg) / np.pi
+#
+#         VCO_cos = np.cos(2 * np.pi * F_vco * t - delay)
+#         VCO_sin = np.sin(2 * np.pi * F_vco * t - delay)
+#
+#         phase_diskr = np.zeros(len(t))
+#         uf = np.zeros(len(t) + 1)
+#         est_phase_VCO = np.zeros(len(t) + 2)
+#         lpf_cos = np.zeros(len(t) + 1)
+#         lpf_sin = np.zeros(len(t) + 1)
+#
+#         d_lf = Ts / self.T_lf
+#         freq_VCO = np.zeros(len(t) + 1)
+#
+#         for i in range(len(t) - 1):
+#             mul_cos = filtered[i] * VCO_cos[i]
+#             mul_sin = filtered[i] * VCO_sin[i]
+#
+#             lpf_cos[i + 1] = mul_cos * d_lf + lpf_cos[i] * (1 - d_lf)
+#             lpf_sin[i + 1] = mul_sin * d_lf + lpf_sin[i] * (1 - d_lf)
+#
+#             phase_diskr[i] = lpf_cos[i] * lpf_sin[i]
+#
+#             if i > 0:
+#                 uf[i + 1] = uf[i] + self.Gp * phase_diskr[i] - (self.Gp - Ts) * phase_diskr[i - 1]
+#             else:
+#                 uf[i + 1] = uf[i] + self.Gp * phase_diskr[i]
+#
+#             freq_VCO[i + 1] = self.Sr * uf[i + 1]
+#             est_phase_VCO[i + 2] = est_phase_VCO[i + 1] + Ts * freq_VCO[i + 1]
+#
+#             arg = F_vco * t[i + 1] + est_phase_VCO[i + 1] + delay
+#             VCO_cos[i + 1] = np.cos(2 * np.pi * arg)
+#             VCO_sin[i + 1] = np.sin(2 * np.pi * arg)
+#
+#         demodulated_signal = lpf_cos[:-1] - lpf_sin[:-1]
+#
+#         # ========== УПРОЩЕННЫЙ ПОДХОД (работает гарантированно) ==========
+#         samples_per_bit = int(self.Fs / self.bits_per_second)
+#
+#         # 1. Сначала timing recovery на исходном сигнале
+#         nbits_total = len(demodulated_signal) // samples_per_bit
+#
+#         best_offset = 0
+#         best_metric = -np.inf
+#         for offset in range(samples_per_bit):
+#             metric = 0
+#             for k in range(nbits_total):
+#                 idx = offset + k * samples_per_bit
+#                 if idx < len(demodulated_signal):
+#                     metric += abs(demodulated_signal[idx])
+#             if metric > best_metric:
+#                 best_metric = metric
+#                 best_offset = offset
+#
+#         # 2. Декодирование с найденным offset
+#         recovered_raw = np.zeros(nbits_total)
+#         for k in range(nbits_total):
+#             idx = best_offset + k * samples_per_bit
+#             if idx < len(demodulated_signal):
+#                 recovered_raw[k] = 1 if demodulated_signal[idx] > 0 else -1
+#
+#         if self.carrier_only:
+#             if np.mean(recovered_raw) < 0:
+#                 recovered_raw = -recovered_raw
+#
+#         # 3. Выравнивание через корреляцию (ОСТАВИТЬ - это ВАЖНО!)
+#         psp_bits_full = bits[:nbits_total]
+#         corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+#         shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+#
+#         if shift > 0:
+#             recovered = recovered_raw[shift:]
+#             psp_bits = psp_bits_full[:len(recovered)]
+#         elif shift < 0:
+#             recovered = recovered_raw[:shift]
+#             psp_bits = psp_bits_full[-shift:]
+#         else:
+#             recovered = recovered_raw
+#             psp_bits = psp_bits_full
+#
+#         # 4. Расчет BER (БЕЗ автокомпенсации инверсии)
+#         if len(recovered) > 0 and len(psp_bits) > 0:
+#             min_len = min(len(recovered), len(psp_bits))
+#             recovered = recovered[:min_len]
+#             psp_bits = psp_bits[:min_len]
+#             errors = np.sum(recovered != psp_bits)
+#             ber = errors / min_len
+#         else:
+#             errors = 0
+#             ber = 1.0
+#
+#         # Время для восстановленной ПСП
+#         t_rec = np.arange(len(psp_bits)) / self.bits_per_second
+#
+#         # === Спектры ===
+#         f1, pxx1 = signal.periodogram(noisy, self.Fs)
+#         f2, pxx2 = signal.periodogram(filtered, self.Fs)
+#
+#         self.finished.emit({
+#             "t": t,
+#             "psp": psp,
+#             "bpsk": signal_bpsk,
+#             "noisy": noisy,
+#             "filtered": filtered,
+#             "f1": f1,
+#             "pxx1": pxx1,
+#             "f2": f2,
+#             "pxx2": pxx2,
+#             "t_rec": t_rec,
+#             "rec": recovered,
+#             "psp_bits": psp_bits,
+#             "errors": errors,
+#             "ber": ber
+#         })
 class Worker(QThread):
     finished = Signal(dict)
 
     def __init__(self, T, Fs, Fc, bits_per_second,
                  filter_type, order_mode, filter_order,
                  Wp_low, Wp_high, Ws_low, Ws_high,
-                 gpass, gstop, Gp, Sr, T_lf, delay_deg,
-                 noise_params, carrier_only):
+                 gpass, gstop, noise_params, carrier_only, delay_deg):
         super().__init__()
         self.T = T
         self.Fs = Fs
@@ -1128,12 +1342,9 @@ class Worker(QThread):
         self.Ws_high = Ws_high
         self.gpass = gpass
         self.gstop = gstop
-        self.Gp = Gp
-        self.Sr = Sr
-        self.T_lf = T_lf
-        self.delay_deg = delay_deg
         self.noise_params = noise_params
         self.carrier_only = carrier_only
+        self.delay_rad = np.deg2rad(delay_deg)
 
     def run(self):
         Ts = 1 / self.Fs
@@ -1155,26 +1366,23 @@ class Worker(QThread):
         # === ШУМ ===
         if self.noise_params['add_noise']:
             P = np.mean(signal_bpsk ** 2)
-
             if self.noise_params['mode'] == 'ebn0':
                 SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
             else:
                 SNR = self.noise_params['value']
-
             noise_power = P / (10 ** (SNR / 10))
             noise = np.sqrt(noise_power) * np.random.randn(len(t))
             noisy = signal_bpsk + noise
         else:
             noisy = signal_bpsk
 
-        # === ФИЛЬТР ===
+        # === ПОЛОСОВОЙ ФИЛЬТР ===
         Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
         Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
 
         if self.order_mode == 1:
             N = self.filter_order
             Wn = Wp_norm
-
             if self.filter_type == "ellip":
                 b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
             elif self.filter_type == "butter":
@@ -1204,51 +1412,24 @@ class Worker(QThread):
 
         filtered = signal.lfilter(b, a, noisy)
 
-        # === PLL ===
-        F_vco = self.Fc
-        delay = np.deg2rad(self.delay_deg) / np.pi
+        # === ПРОСТОЙ СИНХРОННЫЙ ДЕМОДУЛЯТОР ===
+        # Опорное колебание (без фазовой подстройки)
+        ref = np.cos(2 * np.pi * self.Fc * t+ self.delay_rad)
 
-        VCO_cos = np.cos(2 * np.pi * F_vco * t - delay)
-        VCO_sin = np.sin(2 * np.pi * F_vco * t - delay)
+        # Перемножение
+        mixed = filtered * ref
 
-        phase_diskr = np.zeros(len(t))
-        uf = np.zeros(len(t) + 1)
-        est_phase_VCO = np.zeros(len(t) + 2)
-        lpf_cos = np.zeros(len(t) + 1)
-        lpf_sin = np.zeros(len(t) + 1)
+        # ФНЧ для выделения низкочастотной составляющей (частота среза ~ скорость символов)
+        cutoff = self.bits_per_second * 2   # Гц
+        nyquist = self.Fs / 2
+        Wn_lp = min(0.99, cutoff / nyquist)  # защита от выхода за пределы
+        b_lp, a_lp = signal.butter(4, Wn_lp, btype='low')
+        demodulated_signal = signal.lfilter(b_lp, a_lp, mixed)
 
-        d_lf = Ts / self.T_lf
-        freq_VCO = np.zeros(len(t) + 1)
-
-        for i in range(len(t) - 1):
-            mul_cos = filtered[i] * VCO_cos[i]
-            mul_sin = filtered[i] * VCO_sin[i]
-
-            lpf_cos[i + 1] = mul_cos * d_lf + lpf_cos[i] * (1 - d_lf)
-            lpf_sin[i + 1] = mul_sin * d_lf + lpf_sin[i] * (1 - d_lf)
-
-            phase_diskr[i] = lpf_cos[i] * lpf_sin[i]
-
-            if i > 0:
-                uf[i + 1] = uf[i] + self.Gp * phase_diskr[i] - (self.Gp - Ts) * phase_diskr[i - 1]
-            else:
-                uf[i + 1] = uf[i] + self.Gp * phase_diskr[i]
-
-            freq_VCO[i + 1] = self.Sr * uf[i + 1]
-            est_phase_VCO[i + 2] = est_phase_VCO[i + 1] + Ts * freq_VCO[i + 1]
-
-            arg = F_vco * t[i + 1] + est_phase_VCO[i + 1] + delay
-            VCO_cos[i + 1] = np.cos(2 * np.pi * arg)
-            VCO_sin[i + 1] = np.sin(2 * np.pi * arg)
-
-        demodulated_signal = lpf_cos[:-1] - lpf_sin[:-1]
-
-        # ========== УПРОЩЕННЫЙ ПОДХОД (работает гарантированно) ==========
+        # ========== TIMING RECOVERY и ДЕКОДИРОВАНИЕ ==========
         samples_per_bit = int(self.Fs / self.bits_per_second)
 
-        # 1. Сначала timing recovery на исходном сигнале
         nbits_total = len(demodulated_signal) // samples_per_bit
-
         best_offset = 0
         best_metric = -np.inf
         for offset in range(samples_per_bit):
@@ -1261,14 +1442,23 @@ class Worker(QThread):
                 best_metric = metric
                 best_offset = offset
 
-        # 2. Декодирование с найденным offset
+        # Декодирование
         recovered_raw = np.zeros(nbits_total)
         for k in range(nbits_total):
             idx = best_offset + k * samples_per_bit
             if idx < len(demodulated_signal):
                 recovered_raw[k] = 1 if demodulated_signal[idx] > 0 else -1
 
-        # 3. Выравнивание через корреляцию (ОСТАВИТЬ - это ВАЖНО!)
+        # ✅ ИСПРАВЛЕНИЕ ИНВЕРСИИ ДЛЯ BPSK (не для режима несущей)
+        if not self.carrier_only:
+            recovered_raw = -recovered_raw
+
+        # Для немодулированной несущей инверсия уже не нужна, но оставлена на всякий случай
+        if self.carrier_only:
+            if np.mean(recovered_raw) < 0:
+                recovered_raw = -recovered_raw
+
+        # Выравнивание по корреляции
         psp_bits_full = bits[:nbits_total]
         corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
         shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
@@ -1283,7 +1473,7 @@ class Worker(QThread):
             recovered = recovered_raw
             psp_bits = psp_bits_full
 
-        # 4. Расчет BER (БЕЗ автокомпенсации инверсии)
+        # BER
         if len(recovered) > 0 and len(psp_bits) > 0:
             min_len = min(len(recovered), len(psp_bits))
             recovered = recovered[:min_len]
@@ -1294,10 +1484,9 @@ class Worker(QThread):
             errors = 0
             ber = 1.0
 
-        # Время для восстановленной ПСП
         t_rec = np.arange(len(psp_bits)) / self.bits_per_second
 
-        # === Спектры ===
+        # === СПЕКТРЫ ===
         f1, pxx1 = signal.periodogram(noisy, self.Fs)
         f2, pxx2 = signal.periodogram(filtered, self.Fs)
 
@@ -1484,6 +1673,10 @@ class WorkerPart2(QThread):
             idx = best_offset + k * samples_per_bit
             if idx < len(demod_signal):
                 recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
+
+        if self.carrier_only:
+            if np.mean(recovered_raw) < 0:
+                recovered_raw = -recovered_raw
 
         # 3. Выравнивание через корреляцию (компенсация задержки)
         psp_bits_full = bits[:nbits_total]
@@ -1728,6 +1921,10 @@ class WorkerPart3(QThread):
             idx = best_offset + k * samples_per_bit
             if idx < len(demod_signal):
                 recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
+
+        if self.carrier_only:
+            if np.mean(recovered_raw) < 0:
+                recovered_raw = -recovered_raw
 
         # 3. Выравнивание через корреляцию
         psp_bits_full = bits[:nbits_total]
@@ -1988,10 +2185,35 @@ class WorkerPart4(QThread):
             if idx < len(demod_signal):
                 recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
 
+        if self.carrier_only:
+            if np.mean(recovered_raw) < 0:
+                recovered_raw = -recovered_raw
+
+        # # 3. Выравнивание через корреляцию (компенсация задержки)
+        # psp_bits_full = bits[:nbits_total]
+        # corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+        # shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+        #
+        # # Компенсируем сдвиг
+        # if shift > 0:
+        #     recovered = recovered_raw[shift:]
+        #     psp_bits = psp_bits_full[:len(recovered)]
+        # elif shift < 0:
+        #     shift_abs = -shift
+        #     recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
+        #     psp_bits = psp_bits_full[shift_abs:]
+        # else:
+        #     recovered = recovered_raw
+        #     psp_bits = psp_bits_full
         # 3. Выравнивание через корреляцию (компенсация задержки)
         psp_bits_full = bits[:nbits_total]
         corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
         shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+
+        # Определяем знак (инверсия) по максимальной корреляции
+        max_corr_value = corr[shift + len(psp_bits_full) - 1]
+        if max_corr_value < 0:
+            recovered_raw = -recovered_raw
 
         # Компенсируем сдвиг
         if shift > 0:
@@ -2036,64 +2258,139 @@ class WorkerPart4(QThread):
         })
 
 
+# class WorkerPart5(QThread):
+#     finished = Signal(dict)
+#
+#     def __init__(self, phase_min, phase_max, phase_step):
+#         super().__init__()
+#         self.phase_min = phase_min
+#         self.phase_max = phase_max
+#         self.phase_step = phase_step
+#
+#     def run(self):
+#         # Параметры (фиксированные как в MATLAB коде)
+#         T = 2
+#         Fs = 20000
+#         Ts = 1 / Fs
+#         t = np.arange(0, T, Ts)
+#
+#         Fc = 1000
+#         Ac = 1
+#         bits_per_second = 50
+#         phase_shift = -6.53  # Сдвиг фазы в градусах
+#
+#         # Информационный поток
+#         num_bits = int(T * bits_per_second)
+#         psp_bits = np.random.randint(0, 2, num_bits)
+#         psp_bits = np.where(psp_bits == 0, -1, 1)
+#         psp_signal = np.repeat(psp_bits, int(Fs / bits_per_second))[:len(t)]
+#
+#         # Фазовая модуляция
+#         Signal_BPSK = Ac * np.cos(2 * np.pi * Fc * t + np.pi * (psp_signal + 1) / 2)
+#
+#         # Фильтр - ИСПРАВЛЕНО: используем деление через numpy
+#         Wp_band = np.array([900, 1100]) / (Fs / 2)
+#         Ws_band = np.array([800, 1200]) / (Fs / 2)
+#         Rp_band = 1
+#         Rs_band = 40
+#
+#         N_band, Wn_band = signal.ellipord(Wp_band, Ws_band, Rp_band, Rs_band)
+#         b_band, a_band = signal.ellip(N_band, Rp_band, Rs_band, Wn_band, btype='band')
+#         Signal_BPSK_filtered = signal.lfilter(b_band, a_band, Signal_BPSK)
+#
+#         # Генерация дискриминационной характеристики
+#         phase_diff_degrees = np.arange(self.phase_min, self.phase_max + self.phase_step, self.phase_step)
+#         phase_diff_radians = np.deg2rad(phase_diff_degrees) + np.deg2rad(phase_shift)
+#         output_fd_all = np.zeros(len(phase_diff_degrees))
+#
+#         for k, phase_diff in enumerate(phase_diff_radians):
+#             VCO_cos = Ac * np.cos(2 * np.pi * Fc * t + phase_diff)
+#             VCO_sin = Ac * np.sin(2 * np.pi * Fc * t + phase_diff)
+#
+#             mul_cos = Signal_BPSK_filtered * VCO_cos
+#             mul_sin = Signal_BPSK_filtered * VCO_sin
+#
+#             # Используем ФНЧ вместо полосового для демодуляции
+#             # Создаем ФНЧ с частотой среза 100 Гц
+#             Wp_low = 100 / (Fs / 2)
+#             Ws_low = 150 / (Fs / 2)
+#             N_low, Wn_low = signal.ellipord(Wp_low, Ws_low, 1, 40)
+#             b_low, a_low = signal.ellip(N_low, 1, 40, Wn_low, btype='low')
+#
+#             lpf_cos = signal.lfilter(b_low, a_low, mul_cos)
+#             lpf_sin = signal.lfilter(b_low, a_low, mul_sin)
+#
+#             output_fd_all[k] = np.mean(lpf_cos * lpf_sin)
+#
+#         # Нормализация
+#         if max(abs(output_fd_all)) > 0:  # Защита от деления на ноль
+#             output_fd_all = output_fd_all / max(abs(output_fd_all))
+#
+#         self.finished.emit({
+#             "phase_diff": phase_diff_degrees,
+#             "output": output_fd_all
+#         })
 class WorkerPart5(QThread):
     finished = Signal(dict)
 
-    def __init__(self, phase_min, phase_max, phase_step):
+    def __init__(self, T, Fs, Fc, bits_per_second,
+                 Wp_low, Wp_high, Ws_low, Ws_high,
+                 gpass, gstop, phase_shift,
+                 phase_min, phase_max, phase_step):
         super().__init__()
+        self.T = T
+        self.Fs = Fs
+        self.Fc = Fc
+        self.bits_per_second = bits_per_second
+        self.Wp_low = Wp_low
+        self.Wp_high = Wp_high
+        self.Ws_low = Ws_low
+        self.Ws_high = Ws_high
+        self.gpass = gpass
+        self.gstop = gstop
+        self.phase_shift = phase_shift          # в градусах
         self.phase_min = phase_min
         self.phase_max = phase_max
         self.phase_step = phase_step
 
     def run(self):
-        # Параметры (фиксированные как в MATLAB коде)
-        T = 2
-        Fs = 20000
-        Ts = 1 / Fs
-        t = np.arange(0, T, Ts)
+        Ts = 1 / self.Fs
+        t = np.arange(0, self.T, Ts)
 
-        Fc = 1000
-        Ac = 1
-        bits_per_second = 50
-        phase_shift = -6.53  # Сдвиг фазы в градусах
-
-        # Информационный поток
-        num_bits = int(T * bits_per_second)
+        # Формирование случайной ПСП
+        num_bits = int(self.T * self.bits_per_second)
         psp_bits = np.random.randint(0, 2, num_bits)
         psp_bits = np.where(psp_bits == 0, -1, 1)
-        psp_signal = np.repeat(psp_bits, int(Fs / bits_per_second))[:len(t)]
+        psp_signal = np.repeat(psp_bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
-        # Фазовая модуляция
-        Signal_BPSK = Ac * np.cos(2 * np.pi * Fc * t + np.pi * (psp_signal + 1) / 2)
+        # BPSK сигнал
+        Signal_BPSK = np.cos(2 * np.pi * self.Fc * t + np.pi * (psp_signal + 1) / 2)
 
-        # Фильтр - ИСПРАВЛЕНО: используем деление через numpy
-        Wp_band = np.array([900, 1100]) / (Fs / 2)
-        Ws_band = np.array([800, 1200]) / (Fs / 2)
-        Rp_band = 1
-        Rs_band = 40
-
-        N_band, Wn_band = signal.ellipord(Wp_band, Ws_band, Rp_band, Rs_band)
-        b_band, a_band = signal.ellip(N_band, Rp_band, Rs_band, Wn_band, btype='band')
+        # Полосовой фильтр (параметры из глобальных)
+        Wp_band = np.array([self.Wp_low, self.Wp_high]) / (self.Fs / 2)
+        Ws_band = np.array([self.Ws_low, self.Ws_high]) / (self.Fs / 2)
+        N_band, Wn_band = signal.ellipord(Wp_band, Ws_band, self.gpass, self.gstop)
+        b_band, a_band = signal.ellip(N_band, self.gpass, self.gstop, Wn_band, btype='band')
         Signal_BPSK_filtered = signal.lfilter(b_band, a_band, Signal_BPSK)
 
-        # Генерация дискриминационной характеристики
+        # Дискриминационная характеристика
         phase_diff_degrees = np.arange(self.phase_min, self.phase_max + self.phase_step, self.phase_step)
-        phase_diff_radians = np.deg2rad(phase_diff_degrees) + np.deg2rad(phase_shift)
+        phase_diff_radians = np.deg2rad(phase_diff_degrees) + np.deg2rad(self.phase_shift)
+
         output_fd_all = np.zeros(len(phase_diff_degrees))
 
+        # ФНЧ для детектора (частота среза 100 Гц – можно оставить или вынести в параметры)
+        Wp_low = 100 / (self.Fs / 2)
+        Ws_low = 150 / (self.Fs / 2)
+        N_low, Wn_low = signal.ellipord(Wp_low, Ws_low, 1, 40)
+        b_low, a_low = signal.ellip(N_low, 1, 40, Wn_low, btype='low')
+
         for k, phase_diff in enumerate(phase_diff_radians):
-            VCO_cos = Ac * np.cos(2 * np.pi * Fc * t + phase_diff)
-            VCO_sin = Ac * np.sin(2 * np.pi * Fc * t + phase_diff)
+            VCO_cos = np.cos(2 * np.pi * self.Fc * t + phase_diff)
+            VCO_sin = np.sin(2 * np.pi * self.Fc * t + phase_diff)
 
             mul_cos = Signal_BPSK_filtered * VCO_cos
             mul_sin = Signal_BPSK_filtered * VCO_sin
-
-            # Используем ФНЧ вместо полосового для демодуляции
-            # Создаем ФНЧ с частотой среза 100 Гц
-            Wp_low = 100 / (Fs / 2)
-            Ws_low = 150 / (Fs / 2)
-            N_low, Wn_low = signal.ellipord(Wp_low, Ws_low, 1, 40)
-            b_low, a_low = signal.ellip(N_low, 1, 40, Wn_low, btype='low')
 
             lpf_cos = signal.lfilter(b_low, a_low, mul_cos)
             lpf_sin = signal.lfilter(b_low, a_low, mul_sin)
@@ -2101,14 +2398,13 @@ class WorkerPart5(QThread):
             output_fd_all[k] = np.mean(lpf_cos * lpf_sin)
 
         # Нормализация
-        if max(abs(output_fd_all)) > 0:  # Защита от деления на ноль
+        if max(abs(output_fd_all)) > 0:
             output_fd_all = output_fd_all / max(abs(output_fd_all))
 
         self.finished.emit({
             "phase_diff": phase_diff_degrees,
             "output": output_fd_all
         })
-
 
 class PlotTab(QWidget):
     def __init__(self, title, xlabel="Время, с", ylabel="", subplots=1):
@@ -2369,28 +2665,75 @@ class MainWindow(QMainWindow):
         graphs_widget.setLayout(graphs_layout)
 
         # Создаем виджет для кнопок в одной строке (как в части 2)
+        # Создаем виджет для кнопок в одной строке
         button_widget = QWidget()
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Кнопка запуска расчёта
+        # Кнопка запуска расчёта (будет слева)
         self.btn_part1 = QPushButton("Запуск расчёта")
-        self.btn_part1.setMinimumHeight(40)
-        self.btn_part1.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.btn_part1.setFixedHeight(30)
+        self.btn_part1.setFixedWidth(170)
+        self.btn_part1.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #4CAF50;
+                color: white;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
         self.btn_part1.clicked.connect(self.start_part1)
+
+        # Добавляем кнопку слева
+        button_layout.addWidget(self.btn_part1)
+
+        # Добавляем растягивающееся пространство (прижимает следующие кнопки к правому краю)
+        button_layout.addStretch()
+
+        # Кнопка "Построить два на одном"
+        self.btn_dual_plot1 = QPushButton("Построить два на одном")
+        self.btn_dual_plot1.setFixedHeight(30)
+        self.btn_dual_plot1.setFixedWidth(200)
+        self.btn_dual_plot1.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #2196F3; 
+                color: white; 
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.btn_dual_plot1.clicked.connect(self.open_dual_plot_dialog1)
 
         # Кнопка наложения графиков
         self.btn_overlay1 = QPushButton("📊 Наложить графики")
-        self.btn_overlay1.setMinimumHeight(40)
-        self.btn_overlay1.setStyleSheet("font-size: 14px; font-weight: bold; background-color: #FF9800; color: white;")
+        self.btn_overlay1.setFixedHeight(30)
+        self.btn_overlay1.setFixedWidth(180)
+        self.btn_overlay1.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #FF9800; 
+                color: white; 
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+        """)
         self.btn_overlay1.clicked.connect(lambda: self._show_overlay_dialog(1, self._get_part1_graphs()))
 
-        # В разделе части 1, после кнопки btn_overlay1, добавьте:
-
-
-        # Добавляем кнопки в горизонтальный layout
-        button_layout.addWidget(self.btn_part1)
+        # Добавляем кнопки справа (они будут прижаты к правому краю)
+        button_layout.addWidget(self.btn_dual_plot1)
         button_layout.addWidget(self.btn_overlay1)
+
         button_widget.setLayout(button_layout)
 
         # Информация об ошибках
@@ -2459,31 +2802,75 @@ class MainWindow(QMainWindow):
         graphs2.setLayout(graphs2_layout)
 
         # Создаем виджет для двух кнопок в одной строке
+        # Создаем виджет для кнопок в одной строке
         button_widget = QWidget()
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Кнопка запуска расчёта
+        # Кнопка запуска расчёта (будет слева)
         self.btn_part2 = QPushButton("Запуск расчёта")
-        self.btn_part2.setMinimumHeight(40)
-        self.btn_part2.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.btn_part2.setFixedHeight(30)
+        self.btn_part2.setFixedWidth(170)
+        self.btn_part2.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #4CAF50;
+                color: white;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
         self.btn_part2.clicked.connect(self.start_part2)
+
+        # Добавляем кнопку слева
+        button_layout.addWidget(self.btn_part2)
+
+        # Добавляем растягивающееся пространство (прижимает следующие кнопки к правому краю)
+        button_layout.addStretch()
 
         # Кнопка "Построить два на одном"
         self.btn_dual_plot = QPushButton("Построить два на одном")
-        self.btn_dual_plot.setMinimumHeight(40)
-        self.btn_dual_plot.setStyleSheet("font-size: 14px; font-weight: bold; background-color: #2196F3; color: white;")
-        self.btn_dual_plot.clicked.connect(self.open_dual_plot_dialog)  # Изначально неактивна, пока нет данных
+        self.btn_dual_plot.setFixedHeight(30)
+        self.btn_dual_plot.setFixedWidth(200)
+        self.btn_dual_plot.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #2196F3; 
+                color: white; 
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.btn_dual_plot.clicked.connect(self.open_dual_plot_dialog)
 
+        # Кнопка наложения графиков
         self.btn_overlay2 = QPushButton("📊 Наложить графики")
-        self.btn_overlay2.setMinimumHeight(40)
-        self.btn_overlay2.setStyleSheet("font-size: 14px; font-weight: bold; background-color: #FF9800; color: white;")
+        self.btn_overlay2.setFixedHeight(30)
+        self.btn_overlay2.setFixedWidth(180)
+        self.btn_overlay2.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #FF9800; 
+                color: white; 
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+        """)
         self.btn_overlay2.clicked.connect(lambda: self._show_overlay_dialog(2, self._get_part2_graphs()))
-        # self.btn_overlay2.setEnabled(False)
 
-        button_layout.addWidget(self.btn_part2)
+        # Добавляем кнопки справа (они будут прижаты к правому краю)
         button_layout.addWidget(self.btn_dual_plot)
         button_layout.addWidget(self.btn_overlay2)
+
         button_widget.setLayout(button_layout)
 
         # Информация об ошибках
@@ -2497,6 +2884,94 @@ class MainWindow(QMainWindow):
         part2_widget.setLayout(part2_layout)
 
         self.main_tabs.addTab(part2_widget, "Часть 2 (Анализ СВН)")
+
+        # ==================== ЧАСТЬ 5 (исправленная) ====================
+        part5_widget = QWidget()
+        part5_layout = QVBoxLayout()
+
+        # Создаем фигуру для графика
+        self.figure5 = Figure(figsize=(10, 6))
+        self.canvas5 = FigureCanvas(self.figure5)
+        self.ax5 = self.figure5.add_subplot(111)
+        self.ax5.set_title("Дискриминационная характеристика", fontsize=14)
+        self.ax5.set_xlabel("Рассогласование по фазе, град.", fontsize=12)
+        self.ax5.set_ylabel("", fontsize=12)
+        self.ax5.grid(True, alpha=0.3)
+
+        # Тулбар для графика
+        self.toolbar5 = NavigationToolbar(self.canvas5, self)
+
+        # Панель параметров (горизонтальная)
+        params_widget = QWidget()
+        params_widget.setFixedHeight(60)
+        params_layout = QHBoxLayout()
+        params_layout.setContentsMargins(10, 5, 10, 5)
+        params_layout.setSpacing(15)
+
+        # Параметр "От"
+        self.phase_min = SmartDoubleSpinBox()
+        self.phase_min.setValue(-540)
+        self.phase_min.setRange(-1080, 1080)
+        self.phase_min.setDecimals(0)
+        self.phase_min.setFixedWidth(100)
+        self.phase_min.setStyleSheet("font-size: 12px; font-weight: bold;")
+
+        # Параметр "До"
+        self.phase_max = SmartDoubleSpinBox()
+        self.phase_max.setValue(540)
+        self.phase_max.setRange(-1080, 1080)
+        self.phase_max.setDecimals(0)
+        self.phase_max.setFixedWidth(100)
+        self.phase_max.setStyleSheet("font-size: 12px; font-weight: bold;")
+
+        # Параметр "Шаг"
+        self.phase_step = SmartDoubleSpinBox()
+        self.phase_step.setValue(10)
+        self.phase_step.setRange(0.1, 180)
+        self.phase_step.setDecimals(0)
+        self.phase_step.setFixedWidth(100)
+        self.phase_step.setStyleSheet("font-size: 12px; font-weight: bold;")
+
+        # Кнопка построения
+        self.btn5 = QPushButton("Построить ДХ")
+        self.btn5.setFixedHeight(30)
+        self.btn5.setFixedWidth(120)
+        self.btn5.setStyleSheet("""
+                   QPushButton {
+                       background-color: #4CAF50;
+                       color: white;
+                       font-weight: bold;
+                       font-size: 12px;
+                       border-radius: 5px;
+                   }
+                   QPushButton:hover {
+                       background-color: #45a049;
+                   }
+               """)
+        self.btn5.clicked.connect(self.start_part5)
+
+        # Добавляем виджеты на панель параметров
+        params_layout.addWidget(QLabel("От (град.):"))
+        params_layout.addWidget(self.phase_min)
+        params_layout.addSpacing(10)
+        params_layout.addWidget(QLabel("До (град.):"))
+        params_layout.addWidget(self.phase_max)
+        params_layout.addSpacing(10)
+        params_layout.addWidget(QLabel("Шаг (град.):"))
+        params_layout.addWidget(self.phase_step)
+        params_layout.addSpacing(20)
+        params_layout.addWidget(self.btn5)
+        params_layout.addStretch()
+
+        params_widget.setLayout(params_layout)
+
+        # Собираем основную компоновку
+        part5_layout.addWidget(self.canvas5, stretch=1)
+        part5_layout.addWidget(self.toolbar5)
+        part5_layout.addWidget(params_widget)
+
+        part5_widget.setLayout(part5_layout)
+        self.main_tabs.addTab(part5_widget, "Часть 3 (Дискриминационная характеристика)")
 
         # ==================== ЧАСТЬ 3 (исправленная) ====================
         part3_widget = QWidget()
@@ -2539,8 +3014,6 @@ class MainWindow(QMainWindow):
         self.tab_lpf_combined.ax[1].set_ylabel("", fontsize=10)
         self.tab_lpf_combined.ax[1].grid(True, alpha=0.3)
 
-
-
         # Отдельные вкладки для остальных графиков
         self.tab_phase3 = PlotTab("Реализация на выходе ФД")
         self.tab_vco_spec = PlotTab("СПМ на выходе ГУН (без переходного процесса)")
@@ -2549,7 +3022,6 @@ class MainWindow(QMainWindow):
         self.tabs3.addTab(self.tab_phase3, "Реализация на выходе ФД")
         self.tabs3.addTab(self.tab_demod_out3, "Оценка ПСП на выходе демодулятора")
         self.tabs3.addTab(self.tab_vco_spec, "СПМ на выходе ГУН (без переходного процесса)")
-
 
         g3_layout.addWidget(self.tabs3)
         graphs3.setLayout(g3_layout)
@@ -2573,7 +3045,20 @@ class MainWindow(QMainWindow):
         self.dphi.setDecimals(0)
 
         self.btn3 = QPushButton("Запуск расчёта")
+        self.btn3.setFixedHeight(30)
         self.btn3.setFixedWidth(170)  # Такой же как у btn_psd
+        self.btn3.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #4CAF50;
+                color: white;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
         self.btn3.clicked.connect(self.start_part3)
 
         self.transition = SmartDoubleSpinBox()
@@ -2584,7 +3069,20 @@ class MainWindow(QMainWindow):
         self.transition.setDecimals(1)
 
         self.btn_psd = QPushButton("Построить СПМ")
+        self.btn_psd.setFixedHeight(30)
         self.btn_psd.setFixedWidth(170)
+        self.btn_psd.setStyleSheet("""
+                    QPushButton {
+                        font-size: 14px; 
+                        font-weight: bold; 
+                        background-color: #9E9E9E;
+                        color: white;
+                        border-radius: 6px;
+                    }
+                    QPushButton:hover {
+                        background-color: #757575;
+                    }
+                """)
         self.btn_psd.clicked.connect(self.compute_psd_only)
         self.btn_psd.setEnabled(False)
 
@@ -2599,6 +3097,7 @@ class MainWindow(QMainWindow):
         control3_layout.addSpacing(20)
         control3_layout.addWidget(self.btn3)
         control3_layout.addStretch()
+        control3_layout.addSpacing(150)
         control3_layout.addWidget(QLabel("Переходный процесс, c:"))
         control3_layout.addWidget(self.transition)
         control3_layout.addSpacing(10)
@@ -2608,6 +3107,16 @@ class MainWindow(QMainWindow):
 
         control3_widget.setLayout(control3_layout)
 
+        # Кнопка "Построить два на одном" для части 3
+        self.btn_dual_plot3 = QPushButton("Построить два на одном")
+        self.btn_dual_plot3.setFixedWidth(200)
+        self.btn_dual_plot3.setMinimumHeight(30)
+        self.btn_dual_plot3.setStyleSheet(
+            "font-size: 14px; font-weight: bold; background-color: #2196F3; color: white; border-radius: 6px;")
+        self.btn_dual_plot3.clicked.connect(self.open_dual_plot_dialog3)
+
+
+
         # Кнопка наложения графиков - такой же размер как у btn_psd
         self.btn_overlay3 = QPushButton("📊 Наложить графики")
         self.btn_overlay3.setFixedWidth(180)  # Такой же как у btn_psd
@@ -2615,6 +3124,8 @@ class MainWindow(QMainWindow):
         self.btn_overlay3.setStyleSheet(
             "font-size: 14px; font-weight: bold; background-color: #FF9800; color: white; border-radius: 6px;")
         self.btn_overlay3.clicked.connect(lambda: self._show_overlay_dialog(3, self._get_part3_graphs()))
+
+        control3_layout.addWidget(self.btn_dual_plot3)  # Добавить перед btn_overlay3
         control3_layout.addWidget(self.btn_overlay3)
 
 
@@ -2622,7 +3133,7 @@ class MainWindow(QMainWindow):
         part3_layout.addWidget(control3_widget)
         part3_widget.setLayout(part3_layout)
 
-        self.main_tabs.addTab(part3_widget, "Часть 3 (Анализ СВН при Δφ ≠ 0)")
+        self.main_tabs.addTab(part3_widget, "Часть 4 (Анализ СВН при Δφ ≠ 0)")
 
         # ==================== ЧАСТЬ 4 (исправленная) ====================
         part4_widget = QWidget()
@@ -2682,13 +3193,26 @@ class MainWindow(QMainWindow):
         control4_layout = QHBoxLayout()
 
         self.freq_offset = SmartDoubleSpinBox()
-        self.freq_offset.setRange(-500, 500)
+        self.freq_offset.setRange(-10000, 10000)
         self.freq_offset.setValue(0)
         self.freq_offset.setFixedWidth(100)
         self.freq_offset.setDecimals(0)
 
         self.btn4 = QPushButton("Запуск расчёта")
-        self.btn4.setFixedWidth(170)  # Такой же как у btn_psd4
+        self.btn4.setFixedHeight(30)
+        self.btn4.setFixedWidth(170)
+        self.btn4.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #4CAF50;
+                color: white;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
         self.btn4.clicked.connect(self.start_part4)
 
         self.transition4 = SmartDoubleSpinBox()
@@ -2699,7 +3223,20 @@ class MainWindow(QMainWindow):
         self.transition4.setDecimals(1)
 
         self.btn_psd4 = QPushButton("Построить СПМ")
+        self.btn_psd4.setFixedHeight(30)
         self.btn_psd4.setFixedWidth(170)
+        self.btn_psd4.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #9E9E9E;
+                color: white;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #757575;
+            }
+        """)
         self.btn_psd4.clicked.connect(self.compute_psd_only4)
         self.btn_psd4.setEnabled(False)
 
@@ -2714,6 +3251,7 @@ class MainWindow(QMainWindow):
         control4_layout.addSpacing(20)
         control4_layout.addWidget(self.btn4)
         control4_layout.addStretch()
+        control4_layout.addSpacing(180)
         control4_layout.addWidget(QLabel("Переходный процесс, c:"))
         control4_layout.addWidget(self.transition4)
         control4_layout.addSpacing(10)
@@ -2721,6 +3259,16 @@ class MainWindow(QMainWindow):
         # control4_layout.addWidget(self.label_ber4)  # ДОБАВЛЕНО
         control4_widget.setLayout(control4_layout)
         control4_layout.addSpacing(280)
+
+        # Кнопка "Построить два на одном" для части 4
+        self.btn_dual_plot4 = QPushButton("Построить два на одном")
+        self.btn_dual_plot4.setFixedWidth(200)
+        self.btn_dual_plot4.setMinimumHeight(30)
+        self.btn_dual_plot4.setStyleSheet(
+            "font-size: 14px; font-weight: bold; background-color: #2196F3; color: white; border-radius: 6px;")
+        self.btn_dual_plot4.clicked.connect(self.open_dual_plot_dialog4)
+
+
 
         # Кнопка наложения графиков - такой же размер как у btn_psd4
         self.btn_overlay4 = QPushButton("📊 Наложить графики")
@@ -2730,6 +3278,7 @@ class MainWindow(QMainWindow):
             "font-size: 14px; font-weight: bold; background-color: #FF9800; color: white; border-radius: 6px;")
         self.btn_overlay4.clicked.connect(lambda: self._show_overlay_dialog(4, self._get_part4_graphs()))
 
+        control4_layout.addWidget(self.btn_dual_plot4)  # Добавить перед btn_overlay4
         control4_layout.addWidget(self.btn_overlay4)
 
         # Кнопка сканирования частоты
@@ -2756,95 +3305,10 @@ class MainWindow(QMainWindow):
         part4_layout.addWidget(control4_widget)
         part4_widget.setLayout(part4_layout)
 
-        self.main_tabs.addTab(part4_widget, "Часть 4 (Анализ СВН при Δf ≠ 0)")
+        self.main_tabs.addTab(part4_widget, "Часть 5 (Анализ СВН при Δf ≠ 0)")
 
-        # ==================== ЧАСТЬ 5 (исправленная) ====================
-        part5_widget = QWidget()
-        part5_layout = QVBoxLayout()
 
-        # Создаем фигуру для графика
-        self.figure5 = Figure(figsize=(10, 6))
-        self.canvas5 = FigureCanvas(self.figure5)
-        self.ax5 = self.figure5.add_subplot(111)
-        self.ax5.set_title("Дискриминационная характеристика", fontsize=14)
-        self.ax5.set_xlabel("Рассогласование по фазе, град.", fontsize=12)
-        self.ax5.set_ylabel("", fontsize=12)
-        self.ax5.grid(True, alpha=0.3)
 
-        # Тулбар для графика
-        self.toolbar5 = NavigationToolbar(self.canvas5, self)
-
-        # Панель параметров (горизонтальная)
-        params_widget = QWidget()
-        params_widget.setFixedHeight(60)
-        params_layout = QHBoxLayout()
-        params_layout.setContentsMargins(10, 5, 10, 5)
-        params_layout.setSpacing(15)
-
-        # Параметр "От"
-        self.phase_min = SmartDoubleSpinBox()
-        self.phase_min.setValue(-540)
-        self.phase_min.setRange(-1080, 1080)
-        self.phase_min.setDecimals(0)
-        self.phase_min.setFixedWidth(100)
-        self.phase_min.setStyleSheet("font-size: 12px; font-weight: bold;")
-
-        # Параметр "До"
-        self.phase_max = SmartDoubleSpinBox()
-        self.phase_max.setValue(540)
-        self.phase_max.setRange(-1080, 1080)
-        self.phase_max.setDecimals(0)
-        self.phase_max.setFixedWidth(100)
-        self.phase_max.setStyleSheet("font-size: 12px; font-weight: bold;")
-
-        # Параметр "Шаг"
-        self.phase_step = SmartDoubleSpinBox()
-        self.phase_step.setValue(10)
-        self.phase_step.setRange(0.1, 180)
-        self.phase_step.setDecimals(0)
-        self.phase_step.setFixedWidth(100)
-        self.phase_step.setStyleSheet("font-size: 12px; font-weight: bold;")
-
-        # Кнопка построения
-        self.btn5 = QPushButton("Построить ДХ")
-        self.btn5.setFixedHeight(30)
-        self.btn5.setFixedWidth(120)
-        self.btn5.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-weight: bold;
-                font-size: 12px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
-        self.btn5.clicked.connect(self.start_part5)
-
-        # Добавляем виджеты на панель параметров
-        params_layout.addWidget(QLabel("От (град.):"))
-        params_layout.addWidget(self.phase_min)
-        params_layout.addSpacing(10)
-        params_layout.addWidget(QLabel("До (град.):"))
-        params_layout.addWidget(self.phase_max)
-        params_layout.addSpacing(10)
-        params_layout.addWidget(QLabel("Шаг (град.):"))
-        params_layout.addWidget(self.phase_step)
-        params_layout.addSpacing(20)
-        params_layout.addWidget(self.btn5)
-        params_layout.addStretch()
-
-        params_widget.setLayout(params_layout)
-
-        # Собираем основную компоновку
-        part5_layout.addWidget(self.canvas5, stretch=1)
-        part5_layout.addWidget(self.toolbar5)
-        part5_layout.addWidget(params_widget)
-
-        part5_widget.setLayout(part5_layout)
-        self.main_tabs.addTab(part5_widget, "Часть 5 (Дискриминационная характеристика)")
 
         main_layout.addWidget(self.main_tabs)
         main_widget.setLayout(main_layout)
@@ -3000,7 +3464,7 @@ class MainWindow(QMainWindow):
         """Строит наложение выбранных графиков с отдельным окном легенды"""
         dialog = QDialog(self)
         dialog.setWindowTitle("Наложение графиков")
-        dialog.resize(1200, 700)  # Увеличил размер для легенды справа
+        dialog.resize(1200, 700)
 
         dialog.setWindowFlags(
             Qt.Dialog |
@@ -3028,17 +3492,17 @@ class MainWindow(QMainWindow):
 
         # Панель управления
         control_panel = QWidget()
-        control_panel.setFixedHeight(40)
+        control_panel.setFixedHeight(80)
         control_layout = QHBoxLayout(control_panel)
         control_layout.setContentsMargins(5, 2, 5, 2)
         control_layout.setSpacing(8)
 
         # Кнопка для показа/скрытия панели легенды
-        self.show_legend_btn_overlay = QPushButton("📋 Показать легенду")  # Текст изменён
+        self.show_legend_btn_overlay = QPushButton("📋 Показать легенду")
         self.show_legend_btn_overlay.setFixedHeight(30)
         self.show_legend_btn_overlay.setMinimumWidth(100)
         self.show_legend_btn_overlay.setCheckable(True)
-        self.show_legend_btn_overlay.setChecked(False)  # <--- ИЗМЕНЕНО: теперь не отмечена
+        self.show_legend_btn_overlay.setChecked(False)
         self.show_legend_btn_overlay.setStyleSheet("""
                 QPushButton {
                     background-color: #2196F3;
@@ -3056,7 +3520,39 @@ class MainWindow(QMainWindow):
                 }
             """)
 
+        # Слайдер для регулировки амплитуды ПСП
+        # Слайдер для регулировки амплитуды ПСП
+        amplitude_widget = QWidget()
+        amplitude_widget.setFixedWidth(300)  # Фиксированная ширина для всего блока
+        amplitude_layout = QHBoxLayout(amplitude_widget)
+        amplitude_layout.setContentsMargins(0, 0, 0, 0)
+        amplitude_layout.setSpacing(8)
+
+        amplitude_label = QLabel("Уровень ПСП на выходе демодулятора:")
+        amplitude_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #333;")
+        amplitude_label.setFixedWidth(100)
+        amplitude_label.setAlignment(Qt.AlignVCenter)
+
+        self.psp_amplitude_slider = QSlider(Qt.Horizontal)
+        self.psp_amplitude_slider.setMinimum(0)
+        self.psp_amplitude_slider.setMaximum(100)
+        self.psp_amplitude_slider.setValue(100)
+        self.psp_amplitude_slider.setFixedWidth(130)  # Чуть шире
+        self.psp_amplitude_slider.setTickPosition(QSlider.TicksBelow)
+        self.psp_amplitude_slider.setTickInterval(10)
+
+        self.amplitude_value_label = QLabel("100%")
+        self.amplitude_value_label.setStyleSheet(
+            "font-size: 12px; font-weight: bold; color: #333; min-width: 40px;")
+        self.amplitude_value_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+
+        amplitude_layout.addWidget(amplitude_label)
+        amplitude_layout.addWidget(self.psp_amplitude_slider)
+        amplitude_layout.addWidget(self.amplitude_value_label)
+
+        # Добавляем в основной control_layout
         control_layout.addWidget(self.show_legend_btn_overlay)
+        control_layout.addWidget(amplitude_widget)  # Убираем stretch
         control_layout.addStretch()
         control_panel.setLayout(control_layout)
 
@@ -3078,7 +3574,7 @@ class MainWindow(QMainWindow):
                 border-left: 1px solid #ccc;
             }
         """)
-        right_widget.hide()  # <--- ДОБАВИТЬ ЭТУ СТРОКУ - легенда изначально скрыта
+        right_widget.hide()
 
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(5, 5, 5, 5)
@@ -3129,6 +3625,18 @@ class MainWindow(QMainWindow):
         self.current_overlay_canvas = canvas
         self.current_overlay_ax = ax
         self.current_overlay_is_scatter = True
+        self.current_psp_amplitude = 1.0
+        self.overlay_zoom_enabled = True  # Флаг для отслеживания ручного зума
+
+        # Подключаем событие для отслеживания изменений масштаба
+        def on_draw_event(event):
+            """Сохраняем пределы после каждого отображения"""
+            if hasattr(self, 'overlay_current_xlim') and hasattr(self, 'overlay_current_ylim'):
+                # Сохраняем только если пользователь явно изменил масштаб (не автоматический)
+                if ax.get_xlim() != self.overlay_current_xlim or ax.get_ylim() != self.overlay_current_ylim:
+                    self.overlay_zoom_enabled = True
+
+        canvas.mpl_connect('draw_event', on_draw_event)
 
         # Цвета
         BLUE_COLOR = '#1f77b4'
@@ -3142,13 +3650,11 @@ class MainWindow(QMainWindow):
 
         def update_legend_panel(legend_data):
             """Обновляет панель легенды"""
-            # Очищаем существующие элементы (кроме stretch)
             while self.legend_items_layout.count() > 1:
                 item = self.legend_items_layout.takeAt(0)
                 if item.widget():
                     item.widget().deleteLater()
 
-            # Добавляем новые элементы
             for name, color, plot_type in legend_data:
                 item_widget = QWidget()
                 item_widget.setStyleSheet("border: none; background-color: transparent;")
@@ -3157,12 +3663,10 @@ class MainWindow(QMainWindow):
                 item_layout.setContentsMargins(5, 5, 5, 5)
                 item_layout.setSpacing(10)
 
-                # Цветной индикатор
                 indicator = QLabel()
                 indicator.setFixedSize(24, 24)
                 indicator.setStyleSheet("border: none; background-color: transparent;")
 
-                # Создаем пиксельную карту для индикатора
                 pixmap = QtGui.QPixmap(24, 24)
                 pixmap.fill(Qt.transparent)
                 painter = QtGui.QPainter(pixmap)
@@ -3184,7 +3688,6 @@ class MainWindow(QMainWindow):
                 painter.end()
                 indicator.setPixmap(pixmap)
 
-                # Название
                 name_label = QLabel(name)
                 name_label.setWordWrap(True)
                 name_label.setStyleSheet("""
@@ -3198,10 +3701,18 @@ class MainWindow(QMainWindow):
                 item_layout.addWidget(name_label, stretch=1)
                 item_widget.setLayout(item_layout)
 
-                # Добавляем в основной layout перед stretch
                 self.legend_items_layout.insertWidget(self.legend_items_layout.count() - 1, item_widget)
 
         def draw_overlay():
+            """Перерисовывает график с сохранением масштаба"""
+            # Сохраняем текущие пределы осей, если был ручной зум
+            if hasattr(self, 'overlay_zoom_enabled') and self.overlay_zoom_enabled:
+                xlim = ax.get_xlim()
+                ylim = ax.get_ylim()
+                need_restore = True
+            else:
+                need_restore = False
+
             ax.clear()
             ax.set_xlabel("Время, с", fontsize=12)
             ax.set_ylabel("", fontsize=12)
@@ -3217,7 +3728,8 @@ class MainWindow(QMainWindow):
 
             for name, x, y, plot_type, xlabel, ylabel in graphs_data:
                 if "ПСП на выходе" in name or "Восстановленная ПСП" in name or "ПСП выходная" in name:
-                    psp_output_data = (name, x, y, plot_type, xlabel, ylabel)
+                    y_adjusted = y * self.current_psp_amplitude
+                    psp_output_data = (name, x, y_adjusted, plot_type, xlabel, ylabel)
                 elif "ПСП" in name or "входная" in name:
                     psp_input_data = (name, x, y, plot_type, xlabel, ylabel)
                 else:
@@ -3231,12 +3743,10 @@ class MainWindow(QMainWindow):
                 color = BLUE_COLOR
                 ax.step(x, y, where='post', color=color, linewidth=2.0, alpha=0.8, label=name)
                 clean_name = name
-                if not clean_name:
-                    clean_name = name
                 legend_data.append((clean_name, color, 'step'))
                 plot_counter += 1
 
-            # Рисуем выходную ПСП
+            # Рисуем выходную ПСП с измененной амплитудой
             if psp_output_data:
                 name, x, y, plot_type, xlabel, ylabel = psp_output_data
                 color = RED_COLOR
@@ -3246,9 +3756,7 @@ class MainWindow(QMainWindow):
                 else:
                     ax.step(x, y, where='post', color=color, linewidth=2.0, alpha=0.8, label=name)
                     plot_type_legend = 'step'
-                clean_name = name
-                if not clean_name:
-                    clean_name = name
+                clean_name = f"{name} (x{self.current_psp_amplitude:.2f})"
                 legend_data.append((clean_name, color, plot_type_legend))
                 plot_counter += 1
 
@@ -3280,12 +3788,35 @@ class MainWindow(QMainWindow):
                 plot_counter += 1
 
             fig.subplots_adjust(left=0.07, right=0.96, top=0.93, bottom=0.08)
-            ax.relim()
-            ax.autoscale_view()
-            canvas.draw()
 
-            # Обновляем панель легенды
+            # Восстанавливаем масштаб, если он был изменен пользователем
+            if need_restore and xlim[0] != xlim[1] and ylim[0] != ylim[1]:
+                try:
+                    ax.set_xlim(xlim)
+                    ax.set_ylim(ylim)
+                except:
+                    ax.relim()
+                    ax.autoscale_view()
+            else:
+                ax.relim()
+                ax.autoscale_view()
+
+            # Сохраняем текущие пределы для отслеживания изменений
+            self.overlay_current_xlim = ax.get_xlim()
+            self.overlay_current_ylim = ax.get_ylim()
+
+            canvas.draw()
             update_legend_panel(legend_data)
+
+        def on_amplitude_changed(value):
+            """Обработчик изменения амплитуды"""
+            self.current_psp_amplitude = value / 100.0
+            self.amplitude_value_label.setText(f"{value}%")
+            # Флаг зума остается включенным, если пользователь делал зум
+            if hasattr(self, 'overlay_zoom_enabled'):
+                # Не сбрасываем флаг, сохраняем состояние
+                pass
+            draw_overlay()
 
         def toggle_legend_panel():
             """Показывает/скрывает панель легенды"""
@@ -3298,8 +3829,9 @@ class MainWindow(QMainWindow):
                 self.show_legend_btn_overlay.setText("📋 Скрыть легенду")
                 self.show_legend_btn_overlay.setChecked(True)
 
-        # Подключаем кнопку
+        # Подключаем сигналы
         self.show_legend_btn_overlay.clicked.connect(toggle_legend_panel)
+        self.psp_amplitude_slider.valueChanged.connect(on_amplitude_changed)
 
         # Если есть выходная ПСП, добавляем кнопку переключения режима
         if has_psp_output:
@@ -3311,13 +3843,13 @@ class MainWindow(QMainWindow):
                     font-weight: bold;
                     padding: 4px 10px;
                     border-radius: 5px;
+                    font-size: 12px;
                 }
                 QPushButton:hover {
                     background-color: #F57C00;
                 }
             """)
 
-            # Вставляем перед кнопкой легенды
             control_layout.insertWidget(0, self.toggle_psp_btn_overlay)
 
             def toggle_psp_mode():
@@ -3330,25 +3862,15 @@ class MainWindow(QMainWindow):
 
             self.toggle_psp_btn_overlay.clicked.connect(toggle_psp_mode)
 
+        # Инициализируем пределы
+        self.overlay_zoom_enabled = False
+        self.overlay_current_xlim = (0, 1)
+        self.overlay_current_ylim = (-1.5, 1.5)
+
         # Рисуем начальный график
         draw_overlay()
 
         dialog.exec()
-
-    def _toggle_psp_mode(self, dialog, canvas, graphs_data):
-        """Переключает режим отображения ПСП"""
-        self.psp_mode_is_scatter = not self.psp_mode_is_scatter
-
-        # Обновляем текст кнопки
-        if self.psp_mode_is_scatter:
-            self.toggle_psp_btn.setText("📊 Переключить ПСП на импульсы")
-            # self.psp_mode_label.setText("ПСП отображается: Точками")
-        else:
-            self.toggle_psp_btn.setText("📊 Переключить ПСП на отсчёты")
-            # self.psp_mode_label.setText("ПСП отображается: Импульсами")
-
-        # Перерисовываем
-        self._draw_overlay_with_psp_mode(graphs_data, canvas, self.psp_mode_is_scatter)
 
     def _draw_overlay_with_psp_mode(self, graphs_data, canvas, is_scatter):
         """Рисует наложение с учётом режима отображения ПСП"""
@@ -3770,12 +4292,9 @@ class MainWindow(QMainWindow):
             Ws_high=filter_params['Ws_high'],
             gpass=filter_params['gpass'],
             gstop=filter_params['gstop'],
-            Gp=pll_params['Gp'],
-            Sr=pll_params['Sr'],
-            T_lf=pll_params['T_lf'],
-            delay_deg=pll_params['delay_deg'],
             noise_params=noise_params,
-            carrier_only=self.global_params.is_carrier_only()
+            carrier_only=self.global_params.is_carrier_only(),
+            delay_deg=pll_params['delay_deg']
         )
         self.worker.finished.connect(self.update_plots_part1)
         self.worker.start()
@@ -3860,22 +4379,26 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", "Сначала выполните расчёт в части 2!")
             return
 
-        # Список доступных графиков
+        # Все доступные графики из части 2
         graph_names = [
+            "Информационная ПСП",
             "Реализация на выходе ФД",
             "Выход перемножителя (Синф.)",
             "Выход перемножителя (Кв.)",
             "Выход ФНЧ (Синф.)",
-            "Выход ФНЧ (Кв.)"
+            "Выход ФНЧ (Кв.)",
+            "Оценка ПСП на выходе демодулятора"
         ]
 
         # Соответствие названий ключам в данных
         graph_keys = {
+            "Информационная ПСП": "psp",
             "Реализация на выходе ФД": "phase",
             "Выход перемножителя (Синф.)": "mul_sin",
             "Выход перемножителя (Кв.)": "mul_cos",
             "Выход ФНЧ (Синф.)": "lpf_sin",
-            "Выход ФНЧ (Кв.)": "lpf_cos"
+            "Выход ФНЧ (Кв.)": "lpf_cos",
+            "Оценка ПСП на выходе демодулятора": "rec"
         }
 
         dialog = SelectGraphsDialog(graph_names, self)
@@ -3889,13 +4412,172 @@ class MainWindow(QMainWindow):
             # Получаем данные для выбранных графиков
             data1 = self.last_part2_data[graph_keys[selected[0]]]
             data2 = self.last_part2_data[graph_keys[selected[1]]]
-            t = self.last_part2_data["t"]
+            t = self.last_part2_data["t"]  # для обычных сигналов
+
+            # Особый случай для ПСП на выходе демодулятора (у неё своя временная сетка)
+            if selected[0] == "Оценка ПСП на выходе демодулятора":
+                t1 = self.last_part2_data["t_rec"]
+            else:
+                t1 = t
+
+            if selected[1] == "Оценка ПСП на выходе демодулятора":
+                t2 = self.last_part2_data["t_rec"]
+            else:
+                t2 = t
 
             # Создаем и показываем окно с двумя графиками
             self.dual_window = DualPlotWindow(
-                selected[0], data1,
-                selected[1], data2,
-                t, self
+                selected[0], data1, t1,
+                selected[1], data2, t2,
+                self
+            )
+            self.dual_window.show()
+
+    def open_dual_plot_dialog1(self):
+        """Открывает диалог выбора графиков для построения (часть 1)"""
+        if not hasattr(self, 'last_part1_data') or self.last_part1_data is None:
+            QMessageBox.warning(self, "Ошибка", "Сначала выполните расчёт в части 1!")
+            return
+
+        graph_names = [
+            "Информационная ПСП",
+            "2ФМ сигнал",
+            "Процесс на выходе канала",
+            "Процесс на выходе ПФ",
+            "Оценка ПСП на выходе демодулятора"
+        ]
+
+        graph_keys = {
+            "Информационная ПСП": ("psp", False),
+            "2ФМ сигнал": ("bpsk", False),
+            "Процесс на выходе канала": ("noisy", False),
+            "Процесс на выходе ПФ": ("filtered", False),
+            "Оценка ПСП на выходе демодулятора": ("rec", True)  # True - использовать t_rec
+        }
+
+        dialog = SelectGraphsDialog(graph_names, self)
+        if dialog.exec() == QDialog.Accepted:
+            selected = dialog.get_selected_graphs()
+
+            if len(selected) != 2:
+                QMessageBox.warning(self, "Ошибка", "Пожалуйста, выберите ровно два графика!")
+                return
+
+            # Получаем данные для выбранных графиков
+            key1, use_rec1 = graph_keys[selected[0]]
+            key2, use_rec2 = graph_keys[selected[1]]
+
+            data1 = self.last_part1_data[key1]
+            data2 = self.last_part1_data[key2]
+
+            t = self.last_part1_data["t"]
+            t_rec = self.last_part1_data["t_rec"]
+
+            t1 = t_rec if use_rec1 else t
+            t2 = t_rec if use_rec2 else t
+
+            self.dual_window = DualPlotWindow(
+                selected[0], data1, t1,
+                selected[1], data2, t2,
+                self
+            )
+            self.dual_window.show()
+
+    def open_dual_plot_dialog3(self):
+        """Открывает диалог выбора графиков для построения (часть 3 - Δφ)"""
+        if not hasattr(self, 'last_part3_data') or self.last_part3_data is None:
+            QMessageBox.warning(self, "Ошибка", "Сначала выполните расчёт в части 3!")
+            return
+
+        graph_names = [
+            "Информационная ПСП",
+            "Реализация на выходе ФД",
+            # "Выход ФНЧ (Синф.)",
+            # "Выход ФНЧ (Кв.)",
+            "Оценка ПСП на выходе демодулятора"
+        ]
+
+        graph_keys = {
+            "Информационная ПСП": ("psp", False),
+            "Реализация на выходе ФД": ("phase", False),
+            # "Выход ФНЧ (Синф.)": ("lpf_sin", False),
+            # "Выход ФНЧ (Кв.)": ("lpf_cos", False),
+            "Оценка ПСП на выходе демодулятора": ("rec", True)
+        }
+
+        dialog = SelectGraphsDialog(graph_names, self)
+        if dialog.exec() == QDialog.Accepted:
+            selected = dialog.get_selected_graphs()
+
+            if len(selected) != 2:
+                QMessageBox.warning(self, "Ошибка", "Пожалуйста, выберите ровно два графика!")
+                return
+
+            key1, use_rec1 = graph_keys[selected[0]]
+            key2, use_rec2 = graph_keys[selected[1]]
+
+            data1 = self.last_part3_data[key1]
+            data2 = self.last_part3_data[key2]
+
+            t = self.last_part3_data["t"]
+            t_rec = self.last_part3_data["t_rec"]
+
+            t1 = t_rec if use_rec1 else t
+            t2 = t_rec if use_rec2 else t
+
+            self.dual_window = DualPlotWindow(
+                selected[0], data1, t1,
+                selected[1], data2, t2,
+                self
+            )
+            self.dual_window.show()
+
+    def open_dual_plot_dialog4(self):
+        """Открывает диалог выбора графиков для построения (часть 4 - Δf)"""
+        if not hasattr(self, 'last_part4_data') or self.last_part4_data is None:
+            QMessageBox.warning(self, "Ошибка", "Сначала выполните расчёт в части 4!")
+            return
+
+        graph_names = [
+            "Информационная ПСП",
+            "Реализация на выходе ФД",
+            # "Выход ФНЧ (Синф.)",
+            # "Выход ФНЧ (Кв.)",
+            "Оценка ПСП на выходе демодулятора"
+        ]
+
+        graph_keys = {
+            "Информационная ПСП": ("psp", False),
+            "Реализация на выходе ФД": ("phase", False),
+            # "Выход ФНЧ (Синф.)": ("lpf_sin", False),
+            # "Выход ФНЧ (Кв.)": ("lpf_cos", False),
+            "Оценка ПСП на выходе демодулятора": ("rec", True)
+        }
+
+        dialog = SelectGraphsDialog(graph_names, self)
+        if dialog.exec() == QDialog.Accepted:
+            selected = dialog.get_selected_graphs()
+
+            if len(selected) != 2:
+                QMessageBox.warning(self, "Ошибка", "Пожалуйста, выберите ровно два графика!")
+                return
+
+            key1, use_rec1 = graph_keys[selected[0]]
+            key2, use_rec2 = graph_keys[selected[1]]
+
+            data1 = self.last_part4_data[key1]
+            data2 = self.last_part4_data[key2]
+
+            t = self.last_part4_data["t"]
+            t_rec = self.last_part4_data["t_rec"]
+
+            t1 = t_rec if use_rec1 else t
+            t2 = t_rec if use_rec2 else t
+
+            self.dual_window = DualPlotWindow(
+                selected[0], data1, t1,
+                selected[1], data2, t2,
+                self
             )
             self.dual_window.show()
 
@@ -4523,6 +5205,7 @@ class MainWindow(QMainWindow):
 
         # НОВЫЕ ГРАФИКИ ПСП
         self.tab_psp4.plot(d["t"], d["psp"], color='blue', linewidth=1.5, label="")
+        self.tab4_phase.plot(d["t"], d["phase"])
 
         if "rec" in d and "t_rec" in d:
             self.tab_demod_out4.update_plot(d["t_rec"], d["rec"], label="")
@@ -4640,8 +5323,36 @@ class MainWindow(QMainWindow):
         self.btn_psd4.setText("Построить СПМ")
         self.btn_psd4.setEnabled(True)
 
+    # def start_part5(self):
+    #     """Запускает расчет дискриминационной характеристики"""
+    #     phase_min = self.phase_min.value()
+    #     phase_max = self.phase_max.value()
+    #     phase_step = self.phase_step.value()
+    #
+    #     if phase_min >= phase_max:
+    #         QMessageBox.warning(self, "Ошибка", "Минимальное значение должно быть меньше максимального!")
+    #         return
+    #
+    #     if phase_step <= 0:
+    #         QMessageBox.warning(self, "Ошибка", "Шаг должен быть положительным!")
+    #         return
+    #
+    #     # Создаем прогресс-бар
+    #     self.progress_dialog = QProgressDialog("Выполняется расчет дискриминационной характеристики...", "Отмена",
+    #                                              0, 0, self)
+    #     self.progress_dialog.setWindowTitle("Расчет")
+    #     self.progress_dialog.setWindowModality(Qt.WindowModal)
+    #     self.progress_dialog.setCancelButton(None)
+    #     self.progress_dialog.setMinimumDuration(0)
+    #     self.progress_dialog.show()
+    #
+    #     # Блокируем интерфейс
+    #     self.set_controls_enabled(False)
+    #     self.worker5 = WorkerPart5(phase_min, phase_max, phase_step)
+    #     self.worker5.finished.connect(self.update_part5)
+    #     self.worker5.start()
     def start_part5(self):
-        """Запускает расчет дискриминационной характеристики"""
+        # Параметры из интерфейса части 5
         phase_min = self.phase_min.value()
         phase_max = self.phase_max.value()
         phase_step = self.phase_step.value()
@@ -4649,23 +5360,48 @@ class MainWindow(QMainWindow):
         if phase_min >= phase_max:
             QMessageBox.warning(self, "Ошибка", "Минимальное значение должно быть меньше максимального!")
             return
-
         if phase_step <= 0:
             QMessageBox.warning(self, "Ошибка", "Шаг должен быть положительным!")
             return
 
-        # Создаем прогресс-бар
-        self.progress_dialog = QProgressDialog("Выполняется расчет дискриминационной характеристики...", "Отмена",
-                                                 0, 0, self)
+        # Глобальные параметры
+        sys_params = self.global_params.get_system_params()
+        filter_params = self.global_params.get_filter_params()
+        pll_params = self.global_params.get_pll_params()
+
+        # Фазовый сдвиг берём из параметров СВН (delay_deg)
+        phase_shift = pll_params['delay_deg']
+
+        # Прогресс-диалог и блокировка интерфейса
+        self.progress_dialog = QProgressDialog("Выполняется расчет дискриминационной характеристики...", "Отмена", 0, 0,
+                                               self)
         self.progress_dialog.setWindowTitle("Расчет")
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setCancelButton(None)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.show()
 
-        # Блокируем интерфейс
         self.set_controls_enabled(False)
-        self.worker5 = WorkerPart5(phase_min, phase_max, phase_step)
+
+        T_for_part5 = min(sys_params['T'], 2.0)
+
+        # Запуск worker'а
+        self.worker5 = WorkerPart5(
+            T=T_for_part5,
+            Fs=sys_params['Fs'],
+            Fc=sys_params['Fc'],
+            bits_per_second=sys_params['bits_per_second'],
+            Wp_low=filter_params['Wp_low'],
+            Wp_high=filter_params['Wp_high'],
+            Ws_low=filter_params['Ws_low'],
+            Ws_high=filter_params['Ws_high'],
+            gpass=filter_params['gpass'],
+            gstop=filter_params['gstop'],
+            phase_shift=phase_shift,
+            phase_min=phase_min,
+            phase_max=phase_max,
+            phase_step=phase_step
+        )
         self.worker5.finished.connect(self.update_part5)
         self.worker5.start()
 
@@ -4697,21 +5433,23 @@ class MainWindow(QMainWindow):
         self.btn_dual_plot.setEnabled(enabled and hasattr(self, 'last_part2_data'))
         self.btn_overlay2.setEnabled(enabled and hasattr(self, 'last_part2_data'))
 
-        # Часть 3
+        # Часть 3 (Δφ)
         self.btn3.setEnabled(enabled)
+        self.btn_dual_plot3.setEnabled(enabled and hasattr(self, 'last_part3_data'))  # ДОБАВИТЬ
         self.btn_psd.setEnabled(enabled and hasattr(self, 'last_vco_signal'))
         self.btn_overlay3.setEnabled(enabled and hasattr(self, 'last_part3_data'))
         self.dphi.setEnabled(enabled)
 
-        # Часть 4
+        # Часть 4 (Δf)
         self.btn4.setEnabled(enabled)
+        self.btn_dual_plot4.setEnabled(enabled and hasattr(self, 'last_part4_data'))  # ДОБАВИТЬ
         self.btn_psd4.setEnabled(enabled and hasattr(self, 'last_vco_signal4'))
         self.btn_overlay4.setEnabled(enabled and hasattr(self, 'last_part4_data'))
         self.freq_offset.setEnabled(enabled)
         self.btn_scan_freq.setEnabled(enabled)
         self.btn_multirun_freq.setEnabled(enabled)
 
-        # Часть 5
+        # Часть 5 (Дискриминационная характеристика)
         self.btn5.setEnabled(enabled)
         self.phase_min.setEnabled(enabled)
         self.phase_max.setEnabled(enabled)
@@ -5031,10 +5769,153 @@ class SelectGraphsDialog(QDialog):
         return selected
 
 
+class GridSettingsDialog(QDialog):
+    """Диалог для настройки сетки графика"""
+
+    def __init__(self, ax, parent=None):
+        super().__init__(parent)
+        self.ax = ax
+        self.setWindowTitle("Настройки сетки")
+        self.setModal(True)
+        self.setMinimumWidth(400)
+
+        layout = QVBoxLayout()
+
+        # Чекбокс включения сетки
+        self.grid_enabled = QCheckBox("Показывать сетку")
+        self.grid_enabled.setChecked(True)
+        layout.addWidget(self.grid_enabled)
+
+        # Выбор осей
+        axes_group = QGroupBox("Оси для сетки")
+        axes_layout = QHBoxLayout()
+        self.axis_both = QRadioButton("Обе оси")
+        self.axis_x = QRadioButton("Только X")
+        self.axis_y = QRadioButton("Только Y")
+        self.axis_both.setChecked(True)
+        axes_layout.addWidget(self.axis_both)
+        axes_layout.addWidget(self.axis_x)
+        axes_layout.addWidget(self.axis_y)
+        axes_group.setLayout(axes_layout)
+        layout.addWidget(axes_group)
+
+        # Выбор типа линий
+        line_group = QGroupBox("Стиль линий")
+        line_layout = QGridLayout()
+
+        line_layout.addWidget(QLabel("Основные линии:"), 0, 0)
+        self.line_style_major = QComboBox()
+        self.line_style_major.addItems(['-', '--', ':', '-.', 'None'])
+        self.line_style_major.setCurrentText('--')
+        line_layout.addWidget(self.line_style_major, 0, 1)
+
+        line_layout.addWidget(QLabel("Толщина:"), 0, 2)
+        self.line_width_major = QDoubleSpinBox()
+        self.line_width_major.setRange(0.1, 5.0)
+        self.line_width_major.setValue(0.8)
+        self.line_width_major.setSingleStep(0.1)
+        line_layout.addWidget(self.line_width_major, 0, 3)
+
+        line_layout.addWidget(QLabel("Доп. линии:"), 1, 0)
+        self.line_style_minor = QComboBox()
+        self.line_style_minor.addItems([':', '--', '-', '-.', 'None'])
+        self.line_style_minor.setCurrentText(':')
+        line_layout.addWidget(self.line_style_minor, 1, 1)
+
+        line_layout.addWidget(QLabel("Толщина:"), 1, 2)
+        self.line_width_minor = QDoubleSpinBox()
+        self.line_width_minor.setRange(0.1, 5.0)
+        self.line_width_minor.setValue(0.3)
+        self.line_width_minor.setSingleStep(0.1)
+        line_layout.addWidget(self.line_width_minor, 1, 3)
+
+        line_group.setLayout(line_layout)
+        layout.addWidget(line_group)
+
+        # Настройка цвета и прозрачности
+        color_group = QGroupBox("Цвет и прозрачность")
+        color_layout = QGridLayout()
+
+        color_layout.addWidget(QLabel("Цвет:"), 0, 0)
+        self.grid_color = QComboBox()
+        self.grid_color.addItems(['gray', 'black', 'blue', 'red', 'green', '#888888', '#cccccc'])
+        self.grid_color.setCurrentText('gray')
+        color_layout.addWidget(self.grid_color, 0, 1)
+
+        color_layout.addWidget(QLabel("Прозрачность:"), 0, 2)
+        self.grid_alpha = QDoubleSpinBox()
+        self.grid_alpha.setRange(0.1, 1.0)
+        self.grid_alpha.setValue(0.5)
+        self.grid_alpha.setSingleStep(0.1)
+        color_layout.addWidget(self.grid_alpha, 0, 3)
+
+        color_group.setLayout(color_layout)
+        layout.addWidget(color_group)
+
+        # Кнопки
+        button_box = QDialogButtonBox()
+        btn_apply = QPushButton("Применить")
+        btn_apply.clicked.connect(self.apply_settings)
+        btn_ok = QPushButton("OK")
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel = QPushButton("Отмена")
+        btn_cancel.clicked.connect(self.reject)
+
+        button_box.addButton(btn_apply, QDialogButtonBox.ButtonRole.ActionRole)
+        button_box.addButton(btn_ok, QDialogButtonBox.ButtonRole.AcceptRole)
+        button_box.addButton(btn_cancel, QDialogButtonBox.ButtonRole.RejectRole)
+
+        layout.addWidget(button_box)
+
+        self.setLayout(layout)
+
+    def get_axis_param(self):
+        """Возвращает параметр axis для matplotlib"""
+        if self.axis_x.isChecked():
+            return 'x'
+        elif self.axis_y.isChecked():
+            return 'y'
+        else:
+            return 'both'
+
+    def apply_settings(self):
+        """Применяет настройки к графику"""
+        if not self.grid_enabled.isChecked():
+            self.ax.grid(False)
+        else:
+            axis = self.get_axis_param()
+
+            # Настройка основных линий
+            if self.line_style_major.currentText() != 'None':
+                self.ax.grid(True, which='major', axis=axis,
+                             linestyle=self.line_style_major.currentText(),
+                             linewidth=self.line_width_major.value(),
+                             alpha=self.grid_alpha.value(),
+                             color=self.grid_color.currentText())
+
+            # Настройка дополнительных линий
+            if self.line_style_minor.currentText() != 'None':
+                self.ax.grid(True, which='minor', axis=axis,
+                             linestyle=self.line_style_minor.currentText(),
+                             linewidth=self.line_width_minor.value(),
+                             alpha=self.grid_alpha.value() * 0.7,
+                             color=self.grid_color.currentText())
+
+                # Включаем отображение минорных делений
+                from matplotlib.ticker import AutoMinorLocator
+                if axis == 'both' or axis == 'x':
+                    self.ax.xaxis.set_minor_locator(AutoMinorLocator())
+                if axis == 'both' or axis == 'y':
+                    self.ax.yaxis.set_minor_locator(AutoMinorLocator())
+
+        # Обновляем отображение
+        self.ax.figure.canvas.draw()
+
+
 class DualPlotWindow(QMainWindow):
     """Окно для отображения двух выбранных графиков"""
 
-    def __init__(self, title1, data1, title2, data2, t, parent=None):
+    def __init__(self, title1, data1, t1, title2, data2, t2, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Сравнение графиков: {title1} и {title2}")
 
@@ -5044,31 +5925,114 @@ class DualPlotWindow(QMainWindow):
         # Создаем фигуру с двумя подграфиками
         self.figure = Figure(figsize=(10, 8))
         self.canvas = FigureCanvas(self.figure)
-        self.toolbar = NavigationToolbar(self.canvas, self)
 
         # Создаем два подграфика один под другим
         self.ax1 = self.figure.add_subplot(211)
         self.ax2 = self.figure.add_subplot(212, sharex=self.ax1)
 
-        # Строим графики
-        self.ax1.plot(t, data1, color='blue', linewidth=1.5)
+        # Определяем тип графика для первого
+        if "ПСП на выходе демодулятора" in title1 or "Оценка ПСП" in title1:
+            self.ax1.step(t1, data1, where='post', color='blue', linewidth=1.5, alpha=0.8)
+        else:
+            self.ax1.plot(t1, data1, color='blue', linewidth=1.5)
+
         self.ax1.set_title(title1, fontsize=12)
-        # self.ax1.set_ylabel("Амплитуда", fontsize=10)
         self.ax1.grid(True, alpha=0.3)
 
-        self.ax2.plot(t, data2, color='red', linewidth=1.5)
+        # Определяем тип графика для второго
+        if "ПСП на выходе демодулятора" in title2 or "Оценка ПСП" in title2:
+            self.ax2.step(t2, data2, where='post', color='red', linewidth=1.5, alpha=0.8)
+        else:
+            self.ax2.plot(t2, data2, color='red', linewidth=1.5)
+
         self.ax2.set_title(title2, fontsize=12)
         self.ax2.set_xlabel("Время, с", fontsize=10)
-        # self.ax2.set_ylabel("Амплитуда", fontsize=10)
         self.ax2.grid(True, alpha=0.3)
 
         self.figure.tight_layout()
 
+        # Создаем кастомный тулбар с кнопкой настроек сетки
+        self.toolbar = self.CustomToolbar(self.canvas, self)
+        self.toolbar.setFixedHeight(35)
+
+        layout.addWidget(self.canvas, stretch=1)
         layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas)
+
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
         self.resize(900, 700)
+
+    class CustomToolbar(NavigationToolbar):
+        """Кастомный тулбар с дополнительной кнопкой настроек сетки"""
+
+        def __init__(self, canvas, parent):
+            super().__init__(canvas, parent)
+            self.parent_window = parent
+            self._add_grid_button()
+
+        def _add_grid_button(self):
+            """Добавляет кнопку настройки сетки"""
+            self.addSeparator()
+
+            # Кнопка настроек сетки
+            self.grid_button = QToolButton(self)
+            self.grid_button.setText("⚙️ Сетка")
+            self.grid_button.setToolTip("Настройки сетки")
+            self.grid_button.setStyleSheet("""
+                QToolButton {
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-weight: bold;
+                    background-color: #9C27B0;
+                    color: white;
+                    border: none;
+                }
+                QToolButton:hover {
+                    background-color: #7B1FA2;
+                }
+            """)
+            self.grid_button.clicked.connect(self._open_grid_settings)
+            self.addWidget(self.grid_button)
+
+        def _open_grid_settings(self):
+            """Открывает диалог настроек сетки для активного подграфика"""
+            # Спрашиваем у пользователя, какой график настраивать
+            dialog = QDialog(self.parent())
+            dialog.setWindowTitle("Выберите график")
+            dialog.setModal(True)
+
+            layout = QVBoxLayout()
+            layout.addWidget(QLabel("Настройки сетки для какого графика?"))
+
+            btn_layout = QHBoxLayout()
+            btn1 = QPushButton("Верхний график")
+            btn2 = QPushButton("Нижний график")
+            btn_cancel = QPushButton("Отмена")
+
+            btn_layout.addWidget(btn1)
+            btn_layout.addWidget(btn2)
+            btn_layout.addWidget(btn_cancel)
+            layout.addLayout(btn_layout)
+
+            dialog.setLayout(layout)
+
+            def apply_to_ax1():
+                settings_dialog = GridSettingsDialog(self.parent_window.ax1, self.parent())
+                settings_dialog.exec()
+                dialog.accept()
+
+            def apply_to_ax2():
+                settings_dialog = GridSettingsDialog(self.parent_window.ax2, self.parent())
+                settings_dialog.exec()
+                dialog.accept()
+
+            btn1.clicked.connect(apply_to_ax1)
+            btn2.clicked.connect(apply_to_ax2)
+            btn_cancel.clicked.connect(dialog.reject)
+
+            dialog.exec()
+
 
 
 # ---------- Запуск приложения
