@@ -3929,7 +3929,7 @@ class MainWindow(QMainWindow):
         title_font.setPointSize(18)
         title_font.setBold(True)
 
-        title = scene.addText("Схема РСПИ с системой восстановленй несущей")
+        title = scene.addText("Схема РСПИ с СВН")
         title.setFont(title_font)
         title.setDefaultTextColor(QtCore.Qt.darkBlue)
         title.setPos(500, -140)
@@ -4676,7 +4676,7 @@ class MainWindow(QMainWindow):
         """Запуск части 3 с глобальными параметрами"""
 
         # Создаем прогресс-бар
-        self.progress_dialog = QProgressDialog("Выполняется расчет части 3...", "Отмена", 0, 0, self)
+        self.progress_dialog = QProgressDialog("Выполняется расчет части 4...", "Отмена", 0, 0, self)
         self.progress_dialog.setWindowTitle("Расчет")
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setCancelButton(None)
@@ -4832,7 +4832,7 @@ class MainWindow(QMainWindow):
     def start_part4(self):
         """Запуск части 4 с глобальными параметрами"""
         # Создаем прогресс-бар
-        self.progress_dialog = QProgressDialog("Выполняется расчет части 4...", "Отмена", 0, 0, self)
+        self.progress_dialog = QProgressDialog("Выполняется расчет части 5...", "Отмена", 0, 0, self)
         self.progress_dialog.setWindowTitle("Расчет")
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setCancelButton(None)
