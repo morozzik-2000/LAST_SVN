@@ -1,9 +1,9 @@
-
+import os
 import sys
 import numpy as np
 from scipy import signal
 from PySide6.QtWidgets import *
-from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtCore import QThread, Signal, Qt, QTimer
 from PySide6 import QtWidgets, QtGui, QtCore
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -16,6 +16,7 @@ from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as Navigation
 
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from PySide6.QtWidgets import QToolButton
+from PySide6.QtCore import QSettings
 
 
 class CustomNavigationToolbar(NavigationToolbar):
@@ -309,9 +310,12 @@ class SignalModeWidget(QWidget):
         """Возвращает режим работы"""
         return 'bpsk' if self.signal_mode.currentIndex() == 0 else 'carrier'
 
+class NoEditDelegate(QStyledItemDelegate):
+    def createEditor(self, parent, option, index):
+        return None
 
 class RangesTableWidget(QWidget):
-    """Виджет с таблицей диапазонов параметров (автоматическое считывание)"""
+    """Таблица диапазонов с сохранением в стандартном QSettings"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -324,13 +328,12 @@ class RangesTableWidget(QWidget):
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
-        # Поле поиска
+        # Поиск
         search_layout = QHBoxLayout()
         search_label = QLabel("🔍 Поиск:")
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Введите параметр для поиска...")
         self.search_edit.textChanged.connect(self.filter_table)
-
         search_layout.addWidget(search_label)
         search_layout.addWidget(self.search_edit)
         layout.addLayout(search_layout)
@@ -347,29 +350,23 @@ class RangesTableWidget(QWidget):
                 border-radius: 5px;
                 font-weight: bold;
             }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
+            QPushButton:hover { background-color: #1976D2; }
         """)
-
         button_layout = QHBoxLayout()
         button_layout.addWidget(refresh_btn)
         button_layout.addStretch()
         layout.addLayout(button_layout)
 
-        # Создаем таблицу
+        # Таблица
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Параметр", "Минимум", "Максимум", "Текущее", "Единицы"])
-
-        # ЗАПРЕЩАЕМ РЕДАКТИРОВАНИЕ - таблица только для просмотра
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-
-        # Запрещаем выделение ячеек (опционально)
+        self.table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
+        self.table.setItemDelegateForColumn(0, NoEditDelegate())
+        self.table.setItemDelegateForColumn(3, NoEditDelegate())
+        self.table.setItemDelegateForColumn(4, NoEditDelegate())
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
-
-        # Настройка таблицы
         self.table.setAlternatingRowColors(True)
         self.table.setStyleSheet("""
             QTableWidget {
@@ -377,13 +374,8 @@ class RangesTableWidget(QWidget):
                 alternate-background-color: #f8f9fa;
                 gridline-color: #dee2e6;
             }
-            QTableWidget::item {
-                padding: 10px;
-            }
-            QTableWidget::item:selected {
-                background-color: #4CAF50;
-                color: white;
-            }
+            QTableWidget::item { padding: 10px; }
+            QTableWidget::item:selected { background-color: #4CAF50; color: white; }
             QHeaderView::section {
                 background-color: #4CAF50;
                 color: white;
@@ -393,24 +385,18 @@ class RangesTableWidget(QWidget):
                 font-size: 14px;
             }
         """)
-
-        # Настраиваем размеры
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setColumnWidth(0, 350)  # Параметр (увеличен)
-        self.table.setColumnWidth(1, 100)  # Минимум
-        self.table.setColumnWidth(2, 100)  # Максимум
-        self.table.setColumnWidth(3, 100)  # Текущее
-        self.table.setColumnWidth(4, 120)  # Единицы
-
-        # Устанавливаем высоту строк
+        self.table.setColumnWidth(0, 350)
+        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(2, 100)
+        self.table.setColumnWidth(3, 100)
+        self.table.setColumnWidth(4, 120)
         self.table.verticalHeader().setDefaultSectionSize(40)
-
         layout.addWidget(self.table)
 
-        # Добавляем информационную метку
         info_label = QLabel(
-            "ℹ️ Примечание: Таблица только для просмотра. Для изменения параметров используйте соответствующие вкладки.\n"
-            "Данные автоматически считываются из текущих настроек."
+            "ℹ️ Двойной клик по 'Минимум' или 'Максимум' для изменения.\n"
+            "Изменения сохраняются и доступны после перезапуска."
         )
         info_label.setStyleSheet("font-size: 11px; color: #666; margin-top: 10px; padding: 5px;")
         info_label.setWordWrap(True)
@@ -418,172 +404,276 @@ class RangesTableWidget(QWidget):
 
         self.setLayout(layout)
 
-        # Инициализируем таблицу
+        # Настройки
+        self.settings = QSettings("MyCompany", "Lab5")
+        self.param_widgets = {}
+        self.settings_loaded = False
+
+        self.table.cellChanged.connect(self.on_cell_changed)
+
+        # Отложенная загрузка, чтобы main_window был доступен
+        QTimer.singleShot(0, self.load_ranges_from_settings)
         self.refresh_ranges()
 
+        # Вывод ключей для отладки (через 100 мс после загрузки)
+        QTimer.singleShot(100, self.print_settings_keys)
+
+    def print_settings_keys(self):
+        print("=== Все ключи в QSettings ===")
+        for key in self.settings.allKeys():
+            print(f"  {key} = {self.settings.value(key)}")
+        print("==============================")
+
+    # ------------------------------------------------------------
+    # Сбор данных для таблицы
+    # ------------------------------------------------------------
     def collect_all_ranges(self):
-        """Собирает диапазоны из всех виджетов"""
         ranges = []
-
-        # Получаем главное окно
-        main_window = None
-        parent = self.parent()
-        while parent:
-            if isinstance(parent, MainWindow):
-                main_window = parent
-                break
-            parent = parent.parent()
-
+        main_window = self.get_main_window()
         if not main_window:
             return ranges
-
-        # 1. Системные параметры
-        sys_params = main_window.global_params.system_params
+        sys = main_window.global_params.system_params
         ranges.extend([
-            ("Скорость передачи", sys_params.bits_per_second.minimum(),
-             sys_params.bits_per_second.maximum(), sys_params.bits_per_second.value(), "бит/с"),
-            ("Частота несущей", sys_params.Fc.minimum(),
-             sys_params.Fc.maximum(), sys_params.Fc.value(), "Гц"),
-            ("Длина реализации", sys_params.T.minimum(),
-             sys_params.T.maximum(), sys_params.T.value(), "с"),
-            ("Частота дискретизации", sys_params.Fs.minimum(),
-             sys_params.Fs.maximum(), sys_params.Fs.value(), "Гц"),
+            ("Скорость передачи, бит/с", sys.bits_per_second.minimum(),
+             sys.bits_per_second.maximum(), sys.bits_per_second.value(), "бит/с"),
+            ("Частота несущей, Гц", sys.Fc.minimum(),
+             sys.Fc.maximum(), sys.Fc.value(), "Гц"),
+            ("Длина реализации, с", sys.T.minimum(),
+             sys.T.maximum(), sys.T.value(), "с"),
+            ("Частота дискретизации, Гц", sys.Fs.minimum(),
+             sys.Fs.maximum(), sys.Fs.value(), "Гц"),
         ])
-
-        # 2. Параметры фильтра
-        filter_params = main_window.global_params.filter_params
+        ch = main_window.global_params.channel_params
         ranges.extend([
-            ("Полоса пропускания (нижняя)", filter_params.filter_band.Wp_low.minimum(),
-             filter_params.filter_band.Wp_low.maximum(), filter_params.filter_band.Wp_low.value(), "Гц"),
-            ("Полоса пропускания (верхняя)", filter_params.filter_band.Wp_high.minimum(),
-             filter_params.filter_band.Wp_high.maximum(), filter_params.filter_band.Wp_high.value(), "Гц"),
-            ("Полоса заграждения (нижняя)", filter_params.filter_band.Ws_low.minimum(),
-             filter_params.filter_band.Ws_low.maximum(), filter_params.filter_band.Ws_low.value(), "Гц"),
-            ("Полоса заграждения (верхняя)", filter_params.filter_band.Ws_high.minimum(),
-             filter_params.filter_band.Ws_high.maximum(), filter_params.filter_band.Ws_high.value(), "Гц"),
-            ("Пульсации в полосе пропускания", filter_params.filter_params.gpass.minimum(),
-             filter_params.filter_params.gpass.maximum(), filter_params.filter_params.gpass.value(), "дБ"),
-            ("Затухание в полосе заграждения", filter_params.filter_params.gstop.minimum(),
-             filter_params.filter_params.gstop.maximum(), filter_params.filter_params.gstop.value(), "дБ"),
-            ("Порядок фильтра", filter_params.filter_settings.filter_order.minimum(),
-             filter_params.filter_settings.filter_order.maximum(),
-             filter_params.filter_settings.filter_order.value(), ""),
+            ("Eb/N0, дБ", ch.ebn0.minimum(),
+             ch.ebn0.maximum(), ch.ebn0.value(), "дБ"),
         ])
-
-        # 3. Параметры СВН
-        pll_params = main_window.global_params.pll_params
+        pll = main_window.global_params.pll_params
         ranges.extend([
-            ("Коэф. усиления ФНЧ в СВН", pll_params.Gp.minimum(),
-             pll_params.Gp.maximum(), pll_params.Gp.value(), ""),
-            ("Постоянная времени ФНЧ в СВН", pll_params.T_lf.minimum(),
-             pll_params.T_lf.maximum(), pll_params.T_lf.value(), "с"),
-            ("Крутизна ГУН", pll_params.Sr.minimum(),
-             pll_params.Sr.maximum(), pll_params.Sr.value(), "Гц/В"),
-            ("Фазовая задержка", pll_params.delay_deg.minimum(),
-             pll_params.delay_deg.maximum(), pll_params.delay_deg.value(), "град."),
+            ("Коэф. усиления ФНЧ в СВН", pll.Gp.minimum(),
+             pll.Gp.maximum(), pll.Gp.value(), ""),
+            ("Постоянная времени ФНЧ в СВН, с", pll.T_lf.minimum(),
+             pll.T_lf.maximum(), pll.T_lf.value(), "с"),
+            ("Крутизна ГУН, Гц/В", pll.Sr.minimum(),
+             pll.Sr.maximum(), pll.Sr.value(), "Гц/В"),
+            ("Фазовая задержка, град.", pll.delay_deg.minimum(),
+             pll.delay_deg.maximum(), pll.delay_deg.value(), "град."),
         ])
-
-        # 4. Параметры шума
-        channel_params = main_window.global_params.channel_params
-        ranges.extend([
-            ("Eb/N0", channel_params.ebn0.minimum(),
-             channel_params.ebn0.maximum(), channel_params.ebn0.value(), "дБ"),
-        ])
-
-        # 5. Параметры части 3
         if hasattr(main_window, 'dphi'):
             ranges.extend([
-                ("Фазовый сдвиг Δφ (ч.3)", main_window.dphi.minimum(),
+                ("Δφ, град. (часть 4)", main_window.dphi.minimum(),
                  main_window.dphi.maximum(), main_window.dphi.value(), "град."),
             ])
-
-        # 6. Параметры части 4
         if hasattr(main_window, 'freq_offset'):
             ranges.extend([
-                ("Частотная расстройка Δf (ч.4)", main_window.freq_offset.minimum(),
+                ("Δf, Гц (часть 5)", main_window.freq_offset.minimum(),
                  main_window.freq_offset.maximum(), main_window.freq_offset.value(), "Гц"),
             ])
-
-        # 7. Параметры переходного процесса
         if hasattr(main_window, 'transition'):
             ranges.extend([
-                ("Переходный процесс (ч.3)", main_window.transition.minimum(),
+                ("Переходный процесс, с (часть 4)", main_window.transition.minimum(),
                  main_window.transition.maximum(), main_window.transition.value(), "с"),
             ])
-
         if hasattr(main_window, 'transition4'):
             ranges.extend([
-                ("Переходный процесс (ч.4)", main_window.transition4.minimum(),
+                ("Переходный процесс, с (часть 5)", main_window.transition4.minimum(),
                  main_window.transition4.maximum(), main_window.transition4.value(), "с"),
             ])
-
-        # 8. Параметры части 5
         if hasattr(main_window, 'phase_min'):
             ranges.extend([
-                ("Фаза от (ч.5)", main_window.phase_min.minimum(),
+                ("Фаза от, град. (часть 3)", main_window.phase_min.minimum(),
                  main_window.phase_min.maximum(), main_window.phase_min.value(), "град."),
-                ("Фаза до (ч.5)", main_window.phase_max.minimum(),
+                ("Фаза до, град. (часть 3)", main_window.phase_max.minimum(),
                  main_window.phase_max.maximum(), main_window.phase_max.value(), "град."),
-                ("Шаг фазы (ч.5)", main_window.phase_step.minimum(),
+                ("Шаг фазы, град. (часть 3)", main_window.phase_step.minimum(),
                  main_window.phase_step.maximum(), main_window.phase_step.value(), "град."),
             ])
-
         return ranges
 
+    # ------------------------------------------------------------
+    # Обновление таблицы и сопоставление виджетов
+    # ------------------------------------------------------------
     def refresh_ranges(self):
-        """Обновляет таблицу с текущими диапазонами"""
+        self.param_widgets.clear()
+        main_window = self.get_main_window()
+        if main_window:
+            sys = main_window.global_params.system_params
+            self._add_widget_mapping("Скорость передачи, бит/с", sys.bits_per_second)
+            self._add_widget_mapping("Частота несущей, Гц", sys.Fc)
+            self._add_widget_mapping("Длина реализации, с", sys.T)
+            self._add_widget_mapping("Частота дискретизации, Гц", sys.Fs)
+            ch = main_window.global_params.channel_params
+            self._add_widget_mapping("Eb/N0, дБ", ch.ebn0)
+            pll = main_window.global_params.pll_params
+            self._add_widget_mapping("Коэф. усиления ФНЧ в СВН", pll.Gp)
+            self._add_widget_mapping("Постоянная времени ФНЧ в СВН, с", pll.T_lf)
+            self._add_widget_mapping("Крутизна ГУН, Гц/В", pll.Sr)
+            self._add_widget_mapping("Фазовая задержка, град.", pll.delay_deg)
+            if hasattr(main_window, 'dphi'):
+                self._add_widget_mapping("Δφ, град. (часть 4)", main_window.dphi)
+            if hasattr(main_window, 'freq_offset'):
+                self._add_widget_mapping("Δf, Гц (часть 5)", main_window.freq_offset)
+            if hasattr(main_window, 'transition'):
+                self._add_widget_mapping("Переходный процесс, с (часть 4)", main_window.transition)
+            if hasattr(main_window, 'transition4'):
+                self._add_widget_mapping("Переходный процесс, с (часть 5)", main_window.transition4)
+            if hasattr(main_window, 'phase_min'):
+                self._add_widget_mapping("Фаза от, град. (часть 3)", main_window.phase_min)
+                self._add_widget_mapping("Фаза до, град. (часть 3)", main_window.phase_max)
+                self._add_widget_mapping("Шаг фазы, град. (часть 3)", main_window.phase_step)
+
         ranges = self.collect_all_ranges()
-
         self.table.setRowCount(len(ranges))
-
-        # Создаем шрифт для всех ячеек (увеличенный)
         cell_font = QtGui.QFont()
-        cell_font.setPointSize(14)  # Увеличенный размер шрифта
-        cell_font.setFamily("Segoe UI")  # Современный шрифт
-
-        # Шрифт для параметров (жирный)
+        cell_font.setPointSize(14)
+        cell_font.setFamily("Segoe UI")
         param_font = QtGui.QFont()
         param_font.setPointSize(12)
         param_font.setFamily("Segoe UI")
         param_font.setBold(True)
 
         for row, (param_name, min_val, max_val, current_val, unit) in enumerate(ranges):
-            # Параметр (жирный шрифт)
             param_item = QTableWidgetItem(param_name)
             param_item.setFont(param_font)
+            param_item.setFlags(param_item.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(row, 0, param_item)
 
-            # Минимум
             min_item = QTableWidgetItem(self._format_value(min_val))
             min_item.setFont(cell_font)
             min_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.table.setItem(row, 1, min_item)
 
-            # Максимум
             max_item = QTableWidgetItem(self._format_value(max_val))
             max_item.setFont(cell_font)
             max_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.table.setItem(row, 2, max_item)
 
-            # Текущее значение
             current_item = QTableWidgetItem(self._format_value(current_val))
             current_item.setFont(cell_font)
             current_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            # Выделяем текущее значение цветом
-            current_item.setBackground(QtGui.QColor(224, 247, 250))  # Светло-голубой
+            current_item.setBackground(QtGui.QColor(224, 247, 250))
+            current_item.setFlags(current_item.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(row, 3, current_item)
 
-            # Единицы
             unit_item = QTableWidgetItem(unit)
             unit_item.setFont(cell_font)
             unit_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            unit_item.setFlags(unit_item.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(row, 4, unit_item)
 
-        # Сортируем по первому столбцу
         self.table.sortItems(0)
 
+    def _add_widget_mapping(self, param_name, widget):
+        if widget is not None:
+            self.param_widgets[param_name] = (widget, widget.setMinimum, widget.setMaximum)
+
+    # ------------------------------------------------------------
+    # Обработка изменения ячейки
+    # ------------------------------------------------------------
+    def on_cell_changed(self, row, column):
+        if column not in (1, 2):
+            return
+        param_name = self.table.item(row, 0).text()
+        try:
+            new_value = float(self.table.item(row, column).text())
+        except ValueError:
+            self.refresh_ranges()
+            return
+
+        widget_info = self.param_widgets.get(param_name)
+        if widget_info is None:
+            return
+        widget, set_min, set_max = widget_info
+
+        if column == 1:
+            if new_value > widget.maximum():
+                QMessageBox.warning(self, "Ошибка", "Минимум не может быть больше максимума!")
+                self.refresh_ranges()
+                return
+            set_min(new_value)
+        else:
+            if new_value < widget.minimum():
+                QMessageBox.warning(self, "Ошибка", "Максимум не может быть меньше минимума!")
+                self.refresh_ranges()
+                return
+            set_max(new_value)
+
+        key = f"ranges/{param_name}/{'min' if column==1 else 'max'}"
+        self.settings.setValue(key, new_value)
+        self.settings.sync()
+        print(f"[СОХРАНЕНО] {key} = {new_value}")
+
+    # ------------------------------------------------------------
+    # Загрузка сохранённых диапазонов (отложенная, с проверкой)
+    # ------------------------------------------------------------
+    def load_ranges_from_settings(self):
+        if self.settings_loaded:
+            return
+        self.settings_loaded = True
+
+        main_window = self.get_main_window()
+        print(f"[DEBUG] load_ranges_from_settings: main_window = {main_window}")
+        if not main_window:
+            return
+
+        sys = main_window.global_params.system_params
+        self._apply_saved("Скорость передачи, бит/с", sys.bits_per_second)
+        self._apply_saved("Частота несущей, Гц", sys.Fc)
+        self._apply_saved("Длина реализации, с", sys.T)
+        self._apply_saved("Частота дискретизации, Гц", sys.Fs)
+
+        ch = main_window.global_params.channel_params
+        self._apply_saved("Eb/N0, дБ", ch.ebn0)
+
+        pll = main_window.global_params.pll_params
+        self._apply_saved("Коэф. усиления ФНЧ в СВН", pll.Gp)
+        self._apply_saved("Постоянная времени ФНЧ в СВН, с", pll.T_lf)
+        self._apply_saved("Крутизна ГУН, Гц/В", pll.Sr)
+        self._apply_saved("Фазовая задержка, град.", pll.delay_deg)
+
+        if hasattr(main_window, 'dphi'):
+            self._apply_saved("Δφ, град. (часть 4)", main_window.dphi)
+        if hasattr(main_window, 'freq_offset'):
+            self._apply_saved("Δf, Гц (часть 5)", main_window.freq_offset)
+        if hasattr(main_window, 'transition'):
+            self._apply_saved("Переходный процесс, с (часть 4)", main_window.transition)
+        if hasattr(main_window, 'transition4'):
+            self._apply_saved("Переходный процесс, с (часть 5)", main_window.transition4)
+        if hasattr(main_window, 'phase_min'):
+            self._apply_saved("Фаза от, град. (часть 3)", main_window.phase_min)
+            self._apply_saved("Фаза до, град. (часть 3)", main_window.phase_max)
+            self._apply_saved("Шаг фазы, град. (часть 3)", main_window.phase_step)
+
+    def _apply_saved(self, param_name, widget):
+        if widget is None:
+            return
+        min_val = self.settings.value(f"ranges/{param_name}/min", None)
+        max_val = self.settings.value(f"ranges/{param_name}/max", None)
+        if min_val is not None:
+            try:
+                widget.setMinimum(float(min_val))
+                print(f"[ЗАГРУЖЕНО] {param_name} min = {min_val}")
+            except Exception as e:
+                print(f"Ошибка установки минимума {param_name}: {e}")
+        if max_val is not None:
+            try:
+                widget.setMaximum(float(max_val))
+                print(f"[ЗАГРУЖЕНО] {param_name} max = {max_val}")
+            except Exception as e:
+                print(f"Ошибка установки максимума {param_name}: {e}")
+
+    # ------------------------------------------------------------
+    # Вспомогательные методы
+    # ------------------------------------------------------------
+    def get_main_window(self):
+        parent = self.parent()
+        while parent:
+            if isinstance(parent, MainWindow):
+                return parent
+            parent = parent.parent()
+        return None
+
     def _format_value(self, value):
-        """Форматирует значение для отображения"""
         if isinstance(value, float):
             if value == int(value):
                 return str(int(value))
@@ -592,12 +682,14 @@ class RangesTableWidget(QWidget):
         return str(value)
 
     def filter_table(self, text):
-        """Фильтрует таблицу по тексту поиска"""
         for row in range(self.table.rowCount()):
             param_item = self.table.item(row, 0)
             if param_item:
                 show_row = text.lower() in param_item.text().lower()
                 self.table.setRowHidden(row, not show_row)
+
+
+
 
 class OverlayGraphDialog(QDialog):
     """Диалог для выбора графиков для наложения"""
