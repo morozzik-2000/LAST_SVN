@@ -1043,7 +1043,7 @@ class FilterParamsWidget(QWidget):
 
 
 class FilterSettingsWidget(QWidget):
-    """Виджет для настроек фильтра (тип и порядок)"""
+    """Виджет для настроек фильтра с точной подсветкой параметров"""
 
     def __init__(self):
         super().__init__()
@@ -1052,28 +1052,88 @@ class FilterSettingsWidget(QWidget):
         filter_settings_group = QGroupBox("Настройки фильтра")
         filter_settings_layout = QVBoxLayout()
 
-        self.filter_type = QComboBox()
-        self.filter_type.addItems(["ellip", "butter", "cheby1", "cheby2", "bessel"])
-
+        # ---- Режим определения порядка ----
         self.order_mode = QComboBox()
-        self.order_mode.addItems(["Ручной (задать порядок)", "Автоматический (по требованиям)"])  # Ручной по умолчанию
-        self.order_mode.currentIndexChanged.connect(self.on_order_mode_changed)
+        self.order_mode.addItems(["Задать порядок вручную", "Вычислить порядок автоматически"])
+        self.order_mode.currentIndexChanged.connect(self.update_fields_visibility)
 
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Режим определения порядка:"))
+        mode_layout.addWidget(self.order_mode)
+
+        self.help_button = QPushButton("Справка")
+        self.help_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.help_button.clicked.connect(self.show_mode_help)
+        mode_layout.addWidget(self.help_button)
+        mode_layout.addStretch()
+        filter_settings_layout.addLayout(mode_layout)
+
+        # ---- Тип фильтра ----
+        self.filter_type = QComboBox()
+        self.filter_type.addItems([
+            "Эллиптический",
+            "Баттерворта",
+            "Чебышёва I порядка",
+            "Чебышёва II порядка",
+            "Бесселя"
+        ])
+        self.filter_type.currentIndexChanged.connect(self.update_fields_visibility)
+        filter_settings_layout.addWidget(QLabel("Тип фильтра:"))
+        filter_settings_layout.addWidget(self.filter_type)
+
+        # ---- Нормировка Бесселя (появляется только при выборе Бесселя) ----
+        self.bessel_norm_label = QLabel("Нормировка Бесселя:")
+        self.bessel_norm_combo = QComboBox()
+        self.bessel_norm_combo.addItems(["фазовая", "групповая задержка", "амплитудная"])
+        self.bessel_norm_combo.setCurrentIndex(0)
+        self.bessel_norm_combo.setToolTip(
+            "Способ нормировки:\n"
+            "фазовая – плоская фаза в полосе пропускания (по умолчанию)\n"
+            "групповая задержка – максимально плоская групповая задержка\n"
+            "амплитудная – максимально плоская АЧХ"
+        )
+        self.bessel_norm_label.setVisible(False)
+        self.bessel_norm_combo.setVisible(False)
+
+        norm_layout = QHBoxLayout()
+        norm_layout.addWidget(self.bessel_norm_label)
+        norm_layout.addWidget(self.bessel_norm_combo)
+        norm_layout.addStretch()
+        filter_settings_layout.addLayout(norm_layout)
+
+        # ---- Порядок фильтра ----
         self.filter_order = QSpinBox()
         self.filter_order.setRange(1, 20)
         self.filter_order.setValue(4)
-        self.filter_order.setEnabled(True)  # При ручном режиме включен
-
-        filter_settings_layout.addWidget(QLabel("Тип фильтра:"))
-        filter_settings_layout.addWidget(self.filter_type)
-        filter_settings_layout.addWidget(QLabel("Режим определения порядка:"))
-        filter_settings_layout.addWidget(self.order_mode)
 
         order_row = QHBoxLayout()
         order_row.addWidget(QLabel("Порядок фильтра:"))
         order_row.addWidget(self.filter_order)
         order_row.addStretch()
         filter_settings_layout.addLayout(order_row)
+
+        # ---- Пояснительная записка ----
+        info_label = QLabel(
+            "ℹ️ Активные поля подсвечены зелёным. Для разных типов фильтров используются разные параметры.\n"
+            "В автоматическом режиме порядок вычисляется, поэтому поле порядка заблокировано.\n"
+            "Для Бесселя доступна настройка нормировки (появляется при выборе типа)."
+        )
+        info_label.setStyleSheet("font-size: 11px; color: #555; margin-top: 5px; padding: 5px; background-color: #f9f9f9; border-radius: 4px;")
+        info_label.setWordWrap(True)
+        filter_settings_layout.addWidget(info_label)
+
         filter_settings_layout.addStretch()
 
         filter_settings_group.setLayout(filter_settings_layout)
@@ -1081,49 +1141,166 @@ class FilterSettingsWidget(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
-    def on_order_mode_changed(self, index):
-        is_manual = (index == 0)  # 0 - ручной, 1 - автоматический
-        self.filter_order.setEnabled(is_manual)
+        # ---- Применяем начальное состояние ----
+        self.update_bessel_norm_visibility()
+        self.update_fields_visibility()
 
+    # ------------------------------------------------------------
+    # Вспомогательные методы
+    # ------------------------------------------------------------
+
+    def update_bessel_norm_visibility(self):
+        """Показывает/скрывает настройку нормировки Бесселя"""
+        is_bessel = (self.filter_type.currentText() == "Бесселя")
+        self.bessel_norm_label.setVisible(is_bessel)
+        self.bessel_norm_combo.setVisible(is_bessel)
+
+    def _set_active(self, widget, active):
+        """Устанавливает активность и цвет виджета"""
+        widget.setEnabled(active)
+        if active:
+            widget.setStyleSheet("background-color: #e8f5e9;")   # зелёный
+        else:
+            widget.setStyleSheet("background-color: #f0f0f0;")   # серый
+
+    def update_fields_visibility(self, index=None):
+        """
+        Обновляет доступность и цвет полей в точном соответствии
+        с параметрами, используемыми в функциях синтеза фильтров.
+        """
+        is_manual = (self.order_mode.currentIndex() == 0)
+        filter_type = self.filter_type.currentText()
+
+        parent = self.parent()
+        if not parent:
+            return
+
+        # ---- Определяем, какие параметры нужны ----
+        need_order = is_manual                 # порядок нужен только в ручном режиме
+        need_wp = True                         # полоса пропускания нужна всегда
+        need_ws = not is_manual                # полоса заграждения нужна только в автоматическом (для *ord)
+
+        # По умолчанию gpass и gstop не нужны
+        need_gpass = False
+        need_gstop = False
+
+        if is_manual:
+            # Ручной режим: смотрим, какие параметры передаются в синтезирующую функцию
+            if filter_type == "Эллиптический":
+                need_gpass = True
+                need_gstop = True
+            elif filter_type == "Чебышёва I порядка":
+                need_gpass = True
+            elif filter_type == "Чебышёва II порядка":
+                need_gstop = True
+            # Баттерворта и Бесселя – gpass и gstop не используются
+        else:
+            # Автоматический режим: все *ord функции используют gpass и gstop
+            need_gpass = True
+            need_gstop = True
+            # Для Бесселя в автоматическом режиме используется buttord,
+            # поэтому gpass и gstop тоже нужны.
+
+        # ---- Применяем стили ----
+        # 1. Порядок
+        self._set_active(self.filter_order, need_order)
+        # Если порядок неактивен, делаем его светло-красным для наглядности
+        if not need_order:
+            self.filter_order.setStyleSheet("background-color: #ffe6e6;")
+
+        # 2. Частоты
+        band = parent.filter_band
+        self._set_active(band.Wp_low, need_wp)
+        self._set_active(band.Wp_high, need_wp)
+        self._set_active(band.Ws_low, need_ws)
+        self._set_active(band.Ws_high, need_ws)
+
+        # 3. Параметры фильтра (gpass, gstop)
+        params = parent.filter_params
+        self._set_active(params.gpass, need_gpass)
+        self._set_active(params.gstop, need_gstop)
+
+        # 4. Обновляем видимость нормировки Бесселя
+        self.update_bessel_norm_visibility()
+
+    def get_bessel_norm(self):
+        """Возвращает латинское значение нормировки для Бесселя"""
+        norm_map = {
+            "фазовая": "phase",
+            "групповая задержка": "delay",
+            "амплитудная": "mag"
+        }
+        return norm_map.get(self.bessel_norm_combo.currentText(), "phase")
+
+    # ------------------------------------------------------------
+    # Справка
+    # ------------------------------------------------------------
+
+    def show_mode_help(self):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Режимы определения порядка фильтра")
+        msg.setTextFormat(Qt.RichText)
+        msg.setText("""
+        <b>Задать порядок вручную</b><br>
+        • Вы сами вводите порядок фильтра.<br>
+        • Программа <b>не проверяет</b>, достаточно ли этого порядка для достижения заданных пульсаций и затухания – фильтр синтезируется с указанным порядком, и вы видите реальную АЧХ.<br>
+        • Подходит для экспериментов, когда вы точно знаете нужный порядок или хотите посмотреть, как изменится АЧХ при фиксированном порядке.<br><br>
+
+        <b>Вычислить порядок автоматически</b><br>
+        • Программа сама находит <b>минимальный порядок</b>, который гарантирует выполнение ваших требований по пульсациям и затуханию при заданных частотах.<br>
+        • Вы задаёте частоты и требования, а порядок рассчитывается автоматически.<br><br>
+
+        <b>Пример</b><br>
+        Допустим, вы задали частоты так, что для выполнения требований нужен 7-й порядок.<br>
+        • В <b>ручном режиме</b> вы можете поставить порядок 7 – фильтр будет с запасом выполнять требования, но будет сложнее (больше вычислений).<br>
+        • Если же вы поставите порядок 3, программа не выдаст ошибку – она синтезирует фильтр 3-го порядка, но реальные пульсации и затухание <b>не достигнут</b> заданных значений. Вы увидите это на графике АЧХ.<br><br>
+
+        В <b>автоматическом режиме</b> программа сама определит, что нужен 7-й порядок, и использует его – вы получите фильтр, точно соответствующий требованиям.<br><br>
+
+        <b>Примечание по Бесселю:</b> для этого типа фильтра доступна настройка нормировки:
+        <ul>
+          <li><b>фазовая</b> – плоская фаза в полосе пропускания (по умолчанию)</li>
+          <li><b>групповая задержка</b> – максимально плоская групповая задержка</li>
+          <li><b>амплитудная</b> – максимально плоская АЧХ</li>
+        </ul>
+
+        <b>Совет:</b> Если не уверены, используйте автоматический режим – он подберёт порядок оптимально.
+        """)
+        msg.exec()
 
 class FilterCombinedWidget(QWidget):
-    """Объединенный виджет для всех параметров фильтра"""
-
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout()
 
-        # Полосы фильтра
+        self.filter_settings = FilterSettingsWidget()
+        layout.addWidget(self.filter_settings)
+
         self.filter_band = FilterBandWidget()
         layout.addWidget(self.filter_band)
 
-        # Характеристики фильтра
         self.filter_params = FilterParamsWidget()
         layout.addWidget(self.filter_params)
-
-        # Настройки фильтра
-        self.filter_settings = FilterSettingsWidget()
-        layout.addWidget(self.filter_settings)
 
         layout.addStretch()
         self.setLayout(layout)
 
-        # Подключаем сигнал изменения режима для блокировки полей
-        self.filter_settings.order_mode.currentIndexChanged.connect(self.on_order_mode_changed)
-        # Инициализируем состояние
-        self.on_order_mode_changed(self.filter_settings.order_mode.currentIndex())
-
-    def on_order_mode_changed(self, index):
-        """При изменении режима блокируем/разблокируем характеристики фильтра"""
-        is_manual = (index == 0)  # 0 - ручной, 1 - автоматический
-
-        # При автоматическом режиме блокируем пульсации и затухание
-        self.filter_params.gpass.setEnabled(is_manual)
-        self.filter_params.gstop.setEnabled(is_manual)
+        # Применяем стили при старте (после того, как все дочерние виджеты созданы)
+        self.filter_settings.update_fields_visibility(self.filter_settings.order_mode.currentIndex())
 
     def get_filter_params(self):
+        type_map = {
+            "Эллиптический": "ellip",
+            "Баттерворта": "butter",
+            "Чебышёва I порядка": "cheby1",
+            "Чебышёва II порядка": "cheby2",
+            "Бесселя": "bessel"
+        }
+        russian_type = self.filter_settings.filter_type.currentText()
+        filter_type_latin = type_map.get(russian_type, "ellip")
+
         return {
-            'type': self.filter_settings.filter_type.currentText(),
+            'type': filter_type_latin,
             'order_mode': self.filter_settings.order_mode.currentIndex(),
             'order': self.filter_settings.filter_order.value(),
             'Wp_low': self.filter_band.Wp_low.value(),
@@ -1131,15 +1308,9 @@ class FilterCombinedWidget(QWidget):
             'Ws_low': self.filter_band.Ws_low.value(),
             'Ws_high': self.filter_band.Ws_high.value(),
             'gpass': self.filter_params.gpass.value(),
-            'gstop': self.filter_params.gstop.value()
+            'gstop': self.filter_params.gstop.value(),
+            'bessel_norm': self.filter_settings.get_bessel_norm()
         }
-
-    def set_filter_params_enabled(self, enabled):
-        """Включить/выключить параметры фильтра в зависимости от ручного режима"""
-        is_manual = (self.filter_settings.order_mode.currentIndex() == 0)
-        self.filter_params.gpass.setEnabled(is_manual and enabled)
-        self.filter_params.gstop.setEnabled(is_manual and enabled)
-
 
 class PLLParamsWidget(QWidget):
     """Виджет для параметров PLL (ФАПЧ)"""
@@ -1415,6 +1586,7 @@ class PLLParamsWidget(QWidget):
 #         })
 class Worker(QThread):
     finished = Signal(dict)
+    error_occurred = Signal(str)
 
     def __init__(self, T, Fs, Fc, bits_per_second,
                  filter_type, order_mode, filter_order,
@@ -1439,168 +1611,172 @@ class Worker(QThread):
         self.delay_rad = np.deg2rad(delay_deg)
 
     def run(self):
-        Ts = 1 / self.Fs
-        t = np.arange(0, self.T, Ts)
+        try:
+            Ts = 1 / self.Fs
+            t = np.arange(0, self.T, Ts)
 
-        num_bits = int(self.T * self.bits_per_second)
+            num_bits = int(self.T * self.bits_per_second)
 
-        # === ПСП ===
-        bits = np.random.randint(0, 2, num_bits)
-        bits = np.where(bits == 0, -1, 1)
-        psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
+            # === ПСП ===
+            bits = np.random.randint(0, 2, num_bits)
+            bits = np.where(bits == 0, -1, 1)
+            psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
-        # === BPSK ===
-        if self.carrier_only:
-            signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
-        else:
-            signal_bpsk = np.cos(2 * np.pi * self.Fc * t + (psp + 1) / 2 * np.pi)
-
-        # === ШУМ ===
-        if self.noise_params['add_noise']:
-            P = np.mean(signal_bpsk ** 2)
-            if self.noise_params['mode'] == 'ebn0':
-                SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
+            # === BPSK ===
+            if self.carrier_only:
+                signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
             else:
-                SNR = self.noise_params['value']
-            noise_power = P / (10 ** (SNR / 10))
-            noise = np.sqrt(noise_power) * np.random.randn(len(t))
-            noisy = signal_bpsk + noise
-        else:
-            noisy = signal_bpsk
+                signal_bpsk = np.cos(2 * np.pi * self.Fc * t + (psp + 1) / 2 * np.pi)
 
-        # === ПОЛОСОВОЙ ФИЛЬТР ===
-        Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
-        Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
-
-        if self.order_mode == 1:
-            N = self.filter_order
-            Wn = Wp_norm
-            if self.filter_type == "ellip":
-                b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
-            elif self.filter_type == "butter":
-                b, a = signal.butter(N, Wn, btype='band')
-            elif self.filter_type == "cheby1":
-                b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
-            elif self.filter_type == "cheby2":
-                b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+            # === ШУМ ===
+            if self.noise_params['add_noise']:
+                P = np.mean(signal_bpsk ** 2)
+                if self.noise_params['mode'] == 'ebn0':
+                    SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
+                else:
+                    SNR = self.noise_params['value']
+                noise_power = P / (10 ** (SNR / 10))
+                noise = np.sqrt(noise_power) * np.random.randn(len(t))
+                noisy = signal_bpsk + noise
             else:
-                b, a = signal.bessel(N, Wn, btype='band', norm='phase')
-        else:
-            if self.filter_type == "ellip":
-                N, Wn = signal.ellipord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
-            elif self.filter_type == "butter":
-                N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.butter(N, Wn, btype='band')
-            elif self.filter_type == "cheby1":
-                N, Wn = signal.cheby1ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
-            elif self.filter_type == "cheby2":
-                N, Wn = signal.cheby2ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                noisy = signal_bpsk
+
+            # === ПОЛОСОВОЙ ФИЛЬТР ===
+            Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
+            Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
+
+            if self.order_mode == 1:
+                N = self.filter_order
+                Wn = Wp_norm
+                if self.filter_type == "ellip":
+                    b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+                elif self.filter_type == "butter":
+                    b, a = signal.butter(N, Wn, btype='band')
+                elif self.filter_type == "cheby1":
+                    b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+                elif self.filter_type == "cheby2":
+                    b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                else:
+                    b, a = signal.bessel(N, Wn, btype='band', norm='phase')
             else:
-                N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.bessel(N, Wn, btype='band', norm='phase')
+                if self.filter_type == "ellip":
+                    N, Wn = signal.ellipord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+                elif self.filter_type == "butter":
+                    N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.butter(N, Wn, btype='band')
+                elif self.filter_type == "cheby1":
+                    N, Wn = signal.cheby1ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+                elif self.filter_type == "cheby2":
+                    N, Wn = signal.cheby2ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                else:
+                    N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.bessel(N, Wn, btype='band', norm='phase')
 
-        filtered = signal.lfilter(b, a, noisy)
+            filtered = signal.lfilter(b, a, noisy)
 
-        # === ПРОСТОЙ СИНХРОННЫЙ ДЕМОДУЛЯТОР ===
-        # Опорное колебание (без фазовой подстройки)
-        ref = np.cos(2 * np.pi * self.Fc * t+ self.delay_rad)
+            # === ПРОСТОЙ СИНХРОННЫЙ ДЕМОДУЛЯТОР ===
+            # Опорное колебание (без фазовой подстройки)
+            ref = np.cos(2 * np.pi * self.Fc * t+ self.delay_rad)
 
-        # Перемножение
-        mixed = filtered * ref
+            # Перемножение
+            mixed = filtered * ref
 
-        # ФНЧ для выделения низкочастотной составляющей (частота среза ~ скорость символов)
-        cutoff = self.bits_per_second * 2   # Гц
-        nyquist = self.Fs / 2
-        Wn_lp = min(0.99, cutoff / nyquist)  # защита от выхода за пределы
-        b_lp, a_lp = signal.butter(4, Wn_lp, btype='low')
-        demodulated_signal = signal.lfilter(b_lp, a_lp, mixed)
+            # ФНЧ для выделения низкочастотной составляющей (частота среза ~ скорость символов)
+            cutoff = self.bits_per_second * 2   # Гц
+            nyquist = self.Fs / 2
+            Wn_lp = min(0.99, cutoff / nyquist)  # защита от выхода за пределы
+            b_lp, a_lp = signal.butter(4, Wn_lp, btype='low')
+            demodulated_signal = signal.lfilter(b_lp, a_lp, mixed)
 
-        # ========== TIMING RECOVERY и ДЕКОДИРОВАНИЕ ==========
-        samples_per_bit = int(self.Fs / self.bits_per_second)
+            # ========== TIMING RECOVERY и ДЕКОДИРОВАНИЕ ==========
+            samples_per_bit = int(self.Fs / self.bits_per_second)
 
-        nbits_total = len(demodulated_signal) // samples_per_bit
-        best_offset = 0
-        best_metric = -np.inf
-        for offset in range(samples_per_bit):
-            metric = 0
+            nbits_total = len(demodulated_signal) // samples_per_bit
+            best_offset = 0
+            best_metric = -np.inf
+            for offset in range(samples_per_bit):
+                metric = 0
+                for k in range(nbits_total):
+                    idx = offset + k * samples_per_bit
+                    if idx < len(demodulated_signal):
+                        metric += abs(demodulated_signal[idx])
+                if metric > best_metric:
+                    best_metric = metric
+                    best_offset = offset
+
+            # Декодирование
+            recovered_raw = np.zeros(nbits_total)
             for k in range(nbits_total):
-                idx = offset + k * samples_per_bit
+                idx = best_offset + k * samples_per_bit
                 if idx < len(demodulated_signal):
-                    metric += abs(demodulated_signal[idx])
-            if metric > best_metric:
-                best_metric = metric
-                best_offset = offset
+                    recovered_raw[k] = 1 if demodulated_signal[idx] > 0 else -1
 
-        # Декодирование
-        recovered_raw = np.zeros(nbits_total)
-        for k in range(nbits_total):
-            idx = best_offset + k * samples_per_bit
-            if idx < len(demodulated_signal):
-                recovered_raw[k] = 1 if demodulated_signal[idx] > 0 else -1
-
-        # ✅ ИСПРАВЛЕНИЕ ИНВЕРСИИ ДЛЯ BPSK (не для режима несущей)
-        if not self.carrier_only:
-            recovered_raw = -recovered_raw
-
-        # Для немодулированной несущей инверсия уже не нужна, но оставлена на всякий случай
-        if self.carrier_only:
-            if np.mean(recovered_raw) < 0:
+            # ✅ ИСПРАВЛЕНИЕ ИНВЕРСИИ ДЛЯ BPSK (не для режима несущей)
+            if not self.carrier_only:
                 recovered_raw = -recovered_raw
 
-        # Выравнивание по корреляции
-        psp_bits_full = bits[:nbits_total]
-        corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
-        shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+            # Для немодулированной несущей инверсия уже не нужна, но оставлена на всякий случай
+            if self.carrier_only:
+                if np.mean(recovered_raw) < 0:
+                    recovered_raw = -recovered_raw
 
-        if shift > 0:
-            recovered = recovered_raw[shift:]
-            psp_bits = psp_bits_full[:len(recovered)]
-        elif shift < 0:
-            recovered = recovered_raw[:shift]
-            psp_bits = psp_bits_full[-shift:]
-        else:
-            recovered = recovered_raw
-            psp_bits = psp_bits_full
+            # Выравнивание по корреляции
+            psp_bits_full = bits[:nbits_total]
+            corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+            shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
 
-        # BER
-        if len(recovered) > 0 and len(psp_bits) > 0:
-            min_len = min(len(recovered), len(psp_bits))
-            recovered = recovered[:min_len]
-            psp_bits = psp_bits[:min_len]
-            errors = np.sum(recovered != psp_bits)
-            ber = errors / min_len
-        else:
-            errors = 0
-            ber = 1.0
+            if shift > 0:
+                recovered = recovered_raw[shift:]
+                psp_bits = psp_bits_full[:len(recovered)]
+            elif shift < 0:
+                recovered = recovered_raw[:shift]
+                psp_bits = psp_bits_full[-shift:]
+            else:
+                recovered = recovered_raw
+                psp_bits = psp_bits_full
 
-        t_rec = np.arange(len(psp_bits)) / self.bits_per_second
+            # BER
+            if len(recovered) > 0 and len(psp_bits) > 0:
+                min_len = min(len(recovered), len(psp_bits))
+                recovered = recovered[:min_len]
+                psp_bits = psp_bits[:min_len]
+                errors = np.sum(recovered != psp_bits)
+                ber = errors / min_len
+            else:
+                errors = 0
+                ber = 1.0
 
-        # === СПЕКТРЫ ===
-        f1, pxx1 = signal.periodogram(noisy, self.Fs)
-        f2, pxx2 = signal.periodogram(filtered, self.Fs)
+            t_rec = np.arange(len(psp_bits)) / self.bits_per_second
 
-        self.finished.emit({
-            "t": t,
-            "psp": psp,
-            "bpsk": signal_bpsk,
-            "noisy": noisy,
-            "filtered": filtered,
-            "f1": f1,
-            "pxx1": pxx1,
-            "f2": f2,
-            "pxx2": pxx2,
-            "t_rec": t_rec,
-            "rec": recovered,
-            "psp_bits": psp_bits,
-            "errors": errors,
-            "ber": ber
-        })
+            # === СПЕКТРЫ ===
+            f1, pxx1 = signal.periodogram(noisy, self.Fs)
+            f2, pxx2 = signal.periodogram(filtered, self.Fs)
+
+            self.finished.emit({
+                "t": t,
+                "psp": psp,
+                "bpsk": signal_bpsk,
+                "noisy": noisy,
+                "filtered": filtered,
+                "f1": f1,
+                "pxx1": pxx1,
+                "f2": f2,
+                "pxx2": pxx2,
+                "t_rec": t_rec,
+                "rec": recovered,
+                "psp_bits": psp_bits,
+                "errors": errors,
+                "ber": ber
+            })
+        except Exception as e:
+            self.error_occurred(str(e))
 
 class WorkerPart2(QThread):
     finished = Signal(dict)
+    error_occurred = Signal(str)
 
     def __init__(self, T, Fs, Fc, bits_per_second, noise_params,
                  filter_type, order_mode, filter_order,
@@ -1628,202 +1804,206 @@ class WorkerPart2(QThread):
         self.carrier_only = carrier_only
 
     def run(self):
-        Ts = 1 / self.Fs
-        t = np.arange(0, self.T, Ts)
 
-        num_bits = int(self.T * self.bits_per_second)
+        try:
+            Ts = 1 / self.Fs
+            t = np.arange(0, self.T, Ts)
 
-        bits = np.random.randint(0, 2, num_bits)
-        bits = np.where(bits == 0, -1, 1)
-        psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
+            num_bits = int(self.T * self.bits_per_second)
 
-        # Напишите:
-        if self.carrier_only:
-            signal_bpsk = np.cos(2 * np.pi * self.Fc * t)  # Чистая несущая
-        else:
-            signal_bpsk = np.cos(2 * np.pi * self.Fc * t + (psp + 1) / 2 * np.pi)
+            bits = np.random.randint(0, 2, num_bits)
+            bits = np.where(bits == 0, -1, 1)
+            psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
-        if self.noise_params['add_noise']:
-            P = np.mean(signal_bpsk ** 2)
-
-            if self.noise_params['mode'] == 'ebn0':
-                SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
+            # Напишите:
+            if self.carrier_only:
+                signal_bpsk = np.cos(2 * np.pi * self.Fc * t)  # Чистая несущая
             else:
-                SNR = self.noise_params['value']
+                signal_bpsk = np.cos(2 * np.pi * self.Fc * t + (psp + 1) / 2 * np.pi)
 
-            noise_power = P / (10 ** (SNR / 10))
-            noise = np.sqrt(noise_power) * np.random.randn(len(t))
-            noisy = signal_bpsk + noise
-        else:
-            noisy = signal_bpsk
+            if self.noise_params['add_noise']:
+                P = np.mean(signal_bpsk ** 2)
 
-        # === ФИЛЬТР (используем параметры из глобальных) ===
-        Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
-        Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
+                if self.noise_params['mode'] == 'ebn0':
+                    SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
+                else:
+                    SNR = self.noise_params['value']
 
-        if self.order_mode == 1:
-            N = self.filter_order
-            Wn = Wp_norm
-
-            if self.filter_type == "ellip":
-                b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
-            elif self.filter_type == "butter":
-                b, a = signal.butter(N, Wn, btype='band')
-            elif self.filter_type == "cheby1":
-                b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
-            elif self.filter_type == "cheby2":
-                b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                noise_power = P / (10 ** (SNR / 10))
+                noise = np.sqrt(noise_power) * np.random.randn(len(t))
+                noisy = signal_bpsk + noise
             else:
-                b, a = signal.bessel(N, Wn, btype='band', norm='phase')
-        else:
-            if self.filter_type == "ellip":
-                N, Wn = signal.ellipord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
-            elif self.filter_type == "butter":
-                N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.butter(N, Wn, btype='band')
-            elif self.filter_type == "cheby1":
-                N, Wn = signal.cheby1ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
-            elif self.filter_type == "cheby2":
-                N, Wn = signal.cheby2ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                noisy = signal_bpsk
+
+            # === ФИЛЬТР (используем параметры из глобальных) ===
+            Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
+            Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
+
+            if self.order_mode == 1:
+                N = self.filter_order
+                Wn = Wp_norm
+
+                if self.filter_type == "ellip":
+                    b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+                elif self.filter_type == "butter":
+                    b, a = signal.butter(N, Wn, btype='band')
+                elif self.filter_type == "cheby1":
+                    b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+                elif self.filter_type == "cheby2":
+                    b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                else:
+                    b, a = signal.bessel(N, Wn, btype='band', norm='phase')
             else:
-                N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.bessel(N, Wn, btype='band', norm='phase')
+                if self.filter_type == "ellip":
+                    N, Wn = signal.ellipord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+                elif self.filter_type == "butter":
+                    N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.butter(N, Wn, btype='band')
+                elif self.filter_type == "cheby1":
+                    N, Wn = signal.cheby1ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+                elif self.filter_type == "cheby2":
+                    N, Wn = signal.cheby2ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                else:
+                    N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.bessel(N, Wn, btype='band', norm='phase')
 
-        filtered = signal.lfilter(b, a, noisy)
+            filtered = signal.lfilter(b, a, noisy)
 
-        # === PLL ===
-        Gp, Sr, T_lf = self.Gp, self.Sr, self.T_lf
-        F_vco, delay = self.Fc, np.deg2rad(self.delay_deg) / np.pi
+            # === PLL ===
+            Gp, Sr, T_lf = self.Gp, self.Sr, self.T_lf
+            F_vco, delay = self.Fc, np.deg2rad(self.delay_deg) / np.pi
 
-        VCO_cos = np.cos(2 * np.pi * F_vco * t - delay)
-        VCO_sin = np.sin(2 * np.pi * F_vco * t - delay)
+            VCO_cos = np.cos(2 * np.pi * F_vco * t - delay)
+            VCO_sin = np.sin(2 * np.pi * F_vco * t - delay)
 
-        mul_cos = np.zeros(len(t))
-        mul_sin = np.zeros(len(t))
-        lpf_cos = np.zeros(len(t) + 1)
-        lpf_sin = np.zeros(len(t) + 1)
-        phase = np.zeros(len(t))
-        uf = np.zeros(len(t) + 1)
-        est = np.zeros(len(t) + 2)
+            mul_cos = np.zeros(len(t))
+            mul_sin = np.zeros(len(t))
+            lpf_cos = np.zeros(len(t) + 1)
+            lpf_sin = np.zeros(len(t) + 1)
+            phase = np.zeros(len(t))
+            uf = np.zeros(len(t) + 1)
+            est = np.zeros(len(t) + 2)
 
-        d_lf = Ts / T_lf
-        freq = np.zeros(len(t) + 1)
+            d_lf = Ts / T_lf
+            freq = np.zeros(len(t) + 1)
 
-        for i in range(len(t) - 1):
-            mul_cos[i] = filtered[i] * VCO_cos[i]
-            mul_sin[i] = filtered[i] * VCO_sin[i]
+            for i in range(len(t) - 1):
+                mul_cos[i] = filtered[i] * VCO_cos[i]
+                mul_sin[i] = filtered[i] * VCO_sin[i]
 
-            lpf_cos[i + 1] = mul_cos[i] * d_lf + lpf_cos[i] * (1 - d_lf)
-            lpf_sin[i + 1] = mul_sin[i] * d_lf + lpf_sin[i] * (1 - d_lf)
+                lpf_cos[i + 1] = mul_cos[i] * d_lf + lpf_cos[i] * (1 - d_lf)
+                lpf_sin[i + 1] = mul_sin[i] * d_lf + lpf_sin[i] * (1 - d_lf)
 
-            phase[i] = lpf_cos[i] * lpf_sin[i]
+                phase[i] = lpf_cos[i] * lpf_sin[i]
 
-            if i > 0:
-                uf[i + 1] = uf[i] + Gp * phase[i] - (Gp - Ts) * phase[i - 1]
-            else:
-                uf[i + 1] = uf[i] + Gp * phase[i]
+                if i > 0:
+                    uf[i + 1] = uf[i] + Gp * phase[i] - (Gp - Ts) * phase[i - 1]
+                else:
+                    uf[i + 1] = uf[i] + Gp * phase[i]
 
-            freq[i + 1] = Sr * uf[i + 1]
-            est[i + 2] = est[i + 1] + Ts * freq[i + 1]
+                freq[i + 1] = Sr * uf[i + 1]
+                est[i + 2] = est[i + 1] + Ts * freq[i + 1]
 
-            arg = F_vco * t[i + 1] + est[i + 1] + delay
-            VCO_cos[i + 1] = np.cos(2 * np.pi * arg)
-            VCO_sin[i + 1] = np.sin(2 * np.pi * arg)
+                arg = F_vco * t[i + 1] + est[i + 1] + delay
+                VCO_cos[i + 1] = np.cos(2 * np.pi * arg)
+                VCO_sin[i + 1] = np.sin(2 * np.pi * arg)
 
-        f_mul_cos, pxx_mul_cos = signal.periodogram(mul_cos, self.Fs)
-        f_mul_sin, pxx_mul_sin = signal.periodogram(mul_sin, self.Fs)
-        f_lpf_cos, pxx_lpf_cos = signal.periodogram(lpf_cos[:-1], self.Fs)
-        f_lpf_sin, pxx_lpf_sin = signal.periodogram(lpf_sin[:-1], self.Fs)
+            f_mul_cos, pxx_mul_cos = signal.periodogram(mul_cos, self.Fs)
+            f_mul_sin, pxx_mul_sin = signal.periodogram(mul_sin, self.Fs)
+            f_lpf_cos, pxx_lpf_cos = signal.periodogram(lpf_cos[:-1], self.Fs)
+            f_lpf_sin, pxx_lpf_sin = signal.periodogram(lpf_sin[:-1], self.Fs)
 
-        # === ДЕМОДУЛЯЦИЯ ===
-        demod_signal = lpf_cos[:-1] - lpf_sin[:-1]
+            # === ДЕМОДУЛЯЦИЯ ===
+            demod_signal = lpf_cos[:-1] - lpf_sin[:-1]
 
-        # ========== НОВЫЙ БЛОК - ТАКОЙ ЖЕ КАК В ЧАСТИ 1 ==========
-        samples_per_bit = int(self.Fs / self.bits_per_second)
+            # ========== НОВЫЙ БЛОК - ТАКОЙ ЖЕ КАК В ЧАСТИ 1 ==========
+            samples_per_bit = int(self.Fs / self.bits_per_second)
 
-        # 1. Timing recovery (поиск оптимального offset)
-        nbits_total = len(demod_signal) // samples_per_bit
+            # 1. Timing recovery (поиск оптимального offset)
+            nbits_total = len(demod_signal) // samples_per_bit
 
-        best_offset = 0
-        best_metric = -np.inf
-        for offset in range(samples_per_bit):
-            metric = 0
+            best_offset = 0
+            best_metric = -np.inf
+            for offset in range(samples_per_bit):
+                metric = 0
+                for k in range(nbits_total):
+                    idx = offset + k * samples_per_bit
+                    if idx < len(demod_signal):
+                        metric += abs(demod_signal[idx])
+                if metric > best_metric:
+                    best_metric = metric
+                    best_offset = offset
+
+            # 2. Декодирование с найденным offset
+            recovered_raw = np.zeros(nbits_total)
             for k in range(nbits_total):
-                idx = offset + k * samples_per_bit
+                idx = best_offset + k * samples_per_bit
                 if idx < len(demod_signal):
-                    metric += abs(demod_signal[idx])
-            if metric > best_metric:
-                best_metric = metric
-                best_offset = offset
+                    recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
 
-        # 2. Декодирование с найденным offset
-        recovered_raw = np.zeros(nbits_total)
-        for k in range(nbits_total):
-            idx = best_offset + k * samples_per_bit
-            if idx < len(demod_signal):
-                recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
+            if self.carrier_only:
+                if np.mean(recovered_raw) < 0:
+                    recovered_raw = -recovered_raw
 
-        if self.carrier_only:
-            if np.mean(recovered_raw) < 0:
-                recovered_raw = -recovered_raw
+            # 3. Выравнивание через корреляцию (компенсация задержки)
+            psp_bits_full = bits[:nbits_total]
+            corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+            shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
 
-        # 3. Выравнивание через корреляцию (компенсация задержки)
-        psp_bits_full = bits[:nbits_total]
-        corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
-        shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+            # Компенсируем сдвиг
+            if shift > 0:
+                recovered = recovered_raw[shift:]
+                psp_bits = psp_bits_full[:len(recovered)]
+            elif shift < 0:
+                shift_abs = -shift
+                recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
+                psp_bits = psp_bits_full[shift_abs:]
+            else:
+                recovered = recovered_raw
+                psp_bits = psp_bits_full
 
-        # Компенсируем сдвиг
-        if shift > 0:
-            recovered = recovered_raw[shift:]
-            psp_bits = psp_bits_full[:len(recovered)]
-        elif shift < 0:
-            shift_abs = -shift
-            recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
-            psp_bits = psp_bits_full[shift_abs:]
-        else:
-            recovered = recovered_raw
-            psp_bits = psp_bits_full
+            # 4. Расчет BER
+            if len(recovered) > 0 and len(psp_bits) > 0:
+                min_len = min(len(recovered), len(psp_bits))
+                recovered = recovered[:min_len]
+                psp_bits = psp_bits[:min_len]
+                errors = np.sum(recovered != psp_bits)
+                ber = errors / min_len if min_len > 0 else 1.0
+            else:
+                errors = 0
+                ber = 1.0
 
-        # 4. Расчет BER
-        if len(recovered) > 0 and len(psp_bits) > 0:
-            min_len = min(len(recovered), len(psp_bits))
-            recovered = recovered[:min_len]
-            psp_bits = psp_bits[:min_len]
-            errors = np.sum(recovered != psp_bits)
-            ber = errors / min_len if min_len > 0 else 1.0
-        else:
-            errors = 0
-            ber = 1.0
+            # Время для восстановленной ПСП
+            t_rec = np.arange(len(psp_bits)) / self.bits_per_second
+            # ========================================================
 
-        # Время для восстановленной ПСП
-        t_rec = np.arange(len(psp_bits)) / self.bits_per_second
-        # ========================================================
-
-        self.finished.emit({
-            "t": t,
-            "psp": psp,
-            "phase": phase,
-            "mul_cos": mul_cos,
-            "mul_sin": mul_sin,
-            "lpf_cos": lpf_cos[:-1],
-            "lpf_sin": lpf_sin[:-1],
-            "f_mul_cos": f_mul_cos,
-            "pxx_mul_cos": pxx_mul_cos,
-            "f_mul_sin": f_mul_sin,
-            "pxx_mul_sin": pxx_mul_sin,
-            "f_lpf_cos": f_lpf_cos,
-            "pxx_lpf_cos": pxx_lpf_cos,
-            "f_lpf_sin": f_lpf_sin,
-            "pxx_lpf_sin": pxx_lpf_sin,
-            "t_rec": t_rec,
-            "rec": recovered,
-            "psp_bits": psp_bits,
-            "errors": errors,
-            "ber": ber
-        })
+            self.finished.emit({
+                "t": t,
+                "psp": psp,
+                "phase": phase,
+                "mul_cos": mul_cos,
+                "mul_sin": mul_sin,
+                "lpf_cos": lpf_cos[:-1],
+                "lpf_sin": lpf_sin[:-1],
+                "f_mul_cos": f_mul_cos,
+                "pxx_mul_cos": pxx_mul_cos,
+                "f_mul_sin": f_mul_sin,
+                "pxx_mul_sin": pxx_mul_sin,
+                "f_lpf_cos": f_lpf_cos,
+                "pxx_lpf_cos": pxx_lpf_cos,
+                "f_lpf_sin": f_lpf_sin,
+                "pxx_lpf_sin": pxx_lpf_sin,
+                "t_rec": t_rec,
+                "rec": recovered,
+                "psp_bits": psp_bits,
+                "errors": errors,
+                "ber": ber
+            })
+        except Exception as e:
+            self.error_occurred.emit(str(e))
 
 
 def cospi(x):
@@ -1837,6 +2017,7 @@ def sinpi(x):
 class WorkerPart3(QThread):
     finished = Signal(dict)
     psd_ready = Signal(dict)
+    error_occurred = Signal(str)
 
     def __init__(self, T, Fs, Fc, bits_per_second,
                  filter_type, order_mode, filter_order,
@@ -1868,203 +2049,208 @@ class WorkerPart3(QThread):
         self.carrier_only = carrier_only
 
     def run(self):
-        Ts = 1 / self.Fs
-        t = np.arange(0, self.T, Ts)
 
-        num_bits = int(self.T * self.bits_per_second)
+        try:
+            Ts = 1 / self.Fs
+            t = np.arange(0, self.T, Ts)
 
-        # === ПСП ===
-        bits = np.random.randint(0, 2, num_bits)
-        bits = np.where(bits == 0, -1, 1)
-        psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
+            num_bits = int(self.T * self.bits_per_second)
 
-        # === BPSK С ФАЗОВОЙ РАССТРОЙКОЙ ===
-        dphi_rad = self.dphi / 180
+            # === ПСП ===
+            bits = np.random.randint(0, 2, num_bits)
+            bits = np.where(bits == 0, -1, 1)
+            psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
-        if self.carrier_only:
-            signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
-        else:
-            # ВАЖНО: используем cospi и добавляем dphi_rad
-            signal_bpsk = cospi(2 * self.Fc * t + (psp + 1) / 2 + dphi_rad)
+            # === BPSK С ФАЗОВОЙ РАССТРОЙКОЙ ===
+            dphi_rad = self.dphi / 180
 
-        # === ШУМ ===
-        if self.noise_params['add_noise']:
-            P = np.mean(signal_bpsk ** 2)
-
-            if self.noise_params['mode'] == 'ebn0':
-                SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
+            if self.carrier_only:
+                signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
             else:
-                SNR = self.noise_params['value']
+                # ВАЖНО: используем cospi и добавляем dphi_rad
+                signal_bpsk = cospi(2 * self.Fc * t + (psp + 1) / 2 + dphi_rad)
 
-            noise_power = P / (10 ** (SNR / 10))
-            noise = np.sqrt(noise_power) * np.random.randn(len(t))
-            noisy = signal_bpsk + noise
-        else:
-            noisy = signal_bpsk
+            # === ШУМ ===
+            if self.noise_params['add_noise']:
+                P = np.mean(signal_bpsk ** 2)
 
-        # === ФИЛЬТР ===
-        Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
-        Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
+                if self.noise_params['mode'] == 'ebn0':
+                    SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
+                else:
+                    SNR = self.noise_params['value']
 
-        if self.order_mode == 1:
-            N = self.filter_order
-            Wn = Wp_norm
-
-            if self.filter_type == "ellip":
-                b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
-            elif self.filter_type == "butter":
-                b, a = signal.butter(N, Wn, btype='band')
-            elif self.filter_type == "cheby1":
-                b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
-            elif self.filter_type == "cheby2":
-                b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                noise_power = P / (10 ** (SNR / 10))
+                noise = np.sqrt(noise_power) * np.random.randn(len(t))
+                noisy = signal_bpsk + noise
             else:
-                b, a = signal.bessel(N, Wn, btype='band', norm='phase')
-        else:
-            if self.filter_type == "ellip":
-                N, Wn = signal.ellipord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
-            elif self.filter_type == "butter":
-                N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.butter(N, Wn, btype='band')
-            elif self.filter_type == "cheby1":
-                N, Wn = signal.cheby1ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
-            elif self.filter_type == "cheby2":
-                N, Wn = signal.cheby2ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                noisy = signal_bpsk
+
+            # === ФИЛЬТР ===
+            Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
+            Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
+
+            if self.order_mode == 1:
+                N = self.filter_order
+                Wn = Wp_norm
+
+                if self.filter_type == "ellip":
+                    b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+                elif self.filter_type == "butter":
+                    b, a = signal.butter(N, Wn, btype='band')
+                elif self.filter_type == "cheby1":
+                    b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+                elif self.filter_type == "cheby2":
+                    b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                else:
+                    b, a = signal.bessel(N, Wn, btype='band', norm='phase')
             else:
-                N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.bessel(N, Wn, btype='band', norm='phase')
+                if self.filter_type == "ellip":
+                    N, Wn = signal.ellipord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+                elif self.filter_type == "butter":
+                    N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.butter(N, Wn, btype='band')
+                elif self.filter_type == "cheby1":
+                    N, Wn = signal.cheby1ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+                elif self.filter_type == "cheby2":
+                    N, Wn = signal.cheby2ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                else:
+                    N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.bessel(N, Wn, btype='band', norm='phase')
 
-        filtered = signal.lfilter(b, a, noisy)
+            filtered = signal.lfilter(b, a, noisy)
 
-        # === PLL ===
-        Gp, Sr, T_lf = self.Gp, self.Sr, self.T_lf
-        F_vco = self.Fc
-        delay = np.deg2rad(self.delay_deg) / np.pi
+            # === PLL ===
+            Gp, Sr, T_lf = self.Gp, self.Sr, self.T_lf
+            F_vco = self.Fc
+            delay = np.deg2rad(self.delay_deg) / np.pi
 
-        VCO_cos = cospi(2 * F_vco * t - delay)
-        VCO_sin = sinpi(2 * F_vco * t - delay)
+            VCO_cos = cospi(2 * F_vco * t - delay)
+            VCO_sin = sinpi(2 * F_vco * t - delay)
 
-        mul_cos = np.zeros(len(t))
-        mul_sin = np.zeros(len(t))
-        lpf_cos = np.zeros(len(t) + 1)
-        lpf_sin = np.zeros(len(t) + 1)
-        phase_diskr = np.zeros(len(t))
-        uf = np.zeros(len(t) + 1)
-        est_phase = np.zeros(len(t) + 2)
-        freq_VCO = np.zeros(len(t) + 1)
+            mul_cos = np.zeros(len(t))
+            mul_sin = np.zeros(len(t))
+            lpf_cos = np.zeros(len(t) + 1)
+            lpf_sin = np.zeros(len(t) + 1)
+            phase_diskr = np.zeros(len(t))
+            uf = np.zeros(len(t) + 1)
+            est_phase = np.zeros(len(t) + 2)
+            freq_VCO = np.zeros(len(t) + 1)
 
-        d_lf = Ts / T_lf
+            d_lf = Ts / T_lf
 
-        for i in range(len(t) - 1):
-            mul_cos[i] = filtered[i] * VCO_cos[i]
-            mul_sin[i] = filtered[i] * VCO_sin[i]
+            for i in range(len(t) - 1):
+                mul_cos[i] = filtered[i] * VCO_cos[i]
+                mul_sin[i] = filtered[i] * VCO_sin[i]
 
-            lpf_cos[i + 1] = mul_cos[i] * d_lf + lpf_cos[i] * (1 - d_lf)
-            lpf_sin[i + 1] = mul_sin[i] * d_lf + lpf_sin[i] * (1 - d_lf)
+                lpf_cos[i + 1] = mul_cos[i] * d_lf + lpf_cos[i] * (1 - d_lf)
+                lpf_sin[i + 1] = mul_sin[i] * d_lf + lpf_sin[i] * (1 - d_lf)
 
-            phase_diskr[i] = lpf_cos[i] * lpf_sin[i]
+                phase_diskr[i] = lpf_cos[i] * lpf_sin[i]
 
-            if i > 0:
-                uf[i + 1] = uf[i] + Gp * phase_diskr[i] - (Gp - Ts) * phase_diskr[i - 1]
-            else:
-                uf[i + 1] = uf[i] + Gp * phase_diskr[i]
+                if i > 0:
+                    uf[i + 1] = uf[i] + Gp * phase_diskr[i] - (Gp - Ts) * phase_diskr[i - 1]
+                else:
+                    uf[i + 1] = uf[i] + Gp * phase_diskr[i]
 
-            freq_VCO[i + 1] = Sr * uf[i + 1]
-            est_phase[i + 2] = est_phase[i + 1] + Ts * freq_VCO[i + 1]
+                freq_VCO[i + 1] = Sr * uf[i + 1]
+                est_phase[i + 2] = est_phase[i + 1] + Ts * freq_VCO[i + 1]
 
-            arg_phVCO = F_vco * t[i + 1] + est_phase[i + 1] + delay
-            VCO_cos[i + 1] = cospi(2 * arg_phVCO)
-            VCO_sin[i + 1] = sinpi(2 * arg_phVCO)
+                arg_phVCO = F_vco * t[i + 1] + est_phase[i + 1] + delay
+                VCO_cos[i + 1] = cospi(2 * arg_phVCO)
+                VCO_sin[i + 1] = sinpi(2 * arg_phVCO)
 
-        # === Шум ГУН ===
-        phase_noise_out = np.cumsum(2e-3 * np.random.randn(len(t)))
-        VCO_out = np.cos(2 * np.pi * self.Fc * t + phase_noise_out)
-        VCO_out += 1e-4 * np.random.randn(len(t))
+            # === Шум ГУН ===
+            phase_noise_out = np.cumsum(2e-3 * np.random.randn(len(t)))
+            VCO_out = np.cos(2 * np.pi * self.Fc * t + phase_noise_out)
+            VCO_out += 1e-4 * np.random.randn(len(t))
 
-        self.last_VCO_out = VCO_out
-        self.last_Fs = self.Fs
+            self.last_VCO_out = VCO_out
+            self.last_Fs = self.Fs
 
-        # === ДЕМОДУЛЯЦИЯ ===
-        demod_signal = lpf_cos[:-1] - lpf_sin[:-1]
+            # === ДЕМОДУЛЯЦИЯ ===
+            demod_signal = lpf_cos[:-1] - lpf_sin[:-1]
 
-        samples_per_bit = int(self.Fs / self.bits_per_second)
+            samples_per_bit = int(self.Fs / self.bits_per_second)
 
-        # 1. Timing recovery
-        nbits_total = len(demod_signal) // samples_per_bit
+            # 1. Timing recovery
+            nbits_total = len(demod_signal) // samples_per_bit
 
-        best_offset = 0
-        best_metric = -np.inf
-        for offset in range(samples_per_bit):
-            metric = 0
+            best_offset = 0
+            best_metric = -np.inf
+            for offset in range(samples_per_bit):
+                metric = 0
+                for k in range(nbits_total):
+                    idx = offset + k * samples_per_bit
+                    if idx < len(demod_signal):
+                        metric += abs(demod_signal[idx])
+                if metric > best_metric:
+                    best_metric = metric
+                    best_offset = offset
+
+            # 2. Декодирование
+            recovered_raw = np.zeros(nbits_total)
             for k in range(nbits_total):
-                idx = offset + k * samples_per_bit
+                idx = best_offset + k * samples_per_bit
                 if idx < len(demod_signal):
-                    metric += abs(demod_signal[idx])
-            if metric > best_metric:
-                best_metric = metric
-                best_offset = offset
+                    recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
 
-        # 2. Декодирование
-        recovered_raw = np.zeros(nbits_total)
-        for k in range(nbits_total):
-            idx = best_offset + k * samples_per_bit
-            if idx < len(demod_signal):
-                recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
+            if self.carrier_only:
+                if np.mean(recovered_raw) < 0:
+                    recovered_raw = -recovered_raw
 
-        if self.carrier_only:
-            if np.mean(recovered_raw) < 0:
-                recovered_raw = -recovered_raw
+            # 3. Выравнивание через корреляцию
+            psp_bits_full = bits[:nbits_total]
+            corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+            shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
 
-        # 3. Выравнивание через корреляцию
-        psp_bits_full = bits[:nbits_total]
-        corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
-        shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+            if shift > 0:
+                recovered = recovered_raw[shift:]
+                psp_bits = psp_bits_full[:len(recovered)]
+            elif shift < 0:
+                shift_abs = -shift
+                recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
+                psp_bits = psp_bits_full[shift_abs:]
+            else:
+                recovered = recovered_raw
+                psp_bits = psp_bits_full
 
-        if shift > 0:
-            recovered = recovered_raw[shift:]
-            psp_bits = psp_bits_full[:len(recovered)]
-        elif shift < 0:
-            shift_abs = -shift
-            recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
-            psp_bits = psp_bits_full[shift_abs:]
-        else:
-            recovered = recovered_raw
-            psp_bits = psp_bits_full
+            # ========== УБРАЛ АВТОКОМПЕНСАЦИЮ ИНВЕРСИИ ==========
+            # 4. Расчет BER (БЕЗ проверки на инверсию)
+            if len(recovered) > 0 and len(psp_bits) > 0:
+                min_len = min(len(recovered), len(psp_bits))
+                recovered = recovered[:min_len]
+                psp_bits = psp_bits[:min_len]
+                errors = np.sum(recovered != psp_bits)
+                ber = errors / min_len if min_len > 0 else 1.0
+            else:
+                errors = 0
+                ber = 1.0
 
-        # ========== УБРАЛ АВТОКОМПЕНСАЦИЮ ИНВЕРСИИ ==========
-        # 4. Расчет BER (БЕЗ проверки на инверсию)
-        if len(recovered) > 0 and len(psp_bits) > 0:
-            min_len = min(len(recovered), len(psp_bits))
-            recovered = recovered[:min_len]
-            psp_bits = psp_bits[:min_len]
-            errors = np.sum(recovered != psp_bits)
-            ber = errors / min_len if min_len > 0 else 1.0
-        else:
-            errors = 0
-            ber = 1.0
+            # Время для восстановленной ПСП
+            t_rec = np.arange(len(psp_bits)) / self.bits_per_second
 
-        # Время для восстановленной ПСП
-        t_rec = np.arange(len(psp_bits)) / self.bits_per_second
-
-        self.finished.emit({
-            "t": t,
-            "errors": errors,
-            "ber": ber,
-            "psp": psp,
-            "phase": phase_diskr,
-            "lpf_cos": lpf_cos[:-1],
-            "lpf_sin": lpf_sin[:-1],
-            "t_rec": t_rec,
-            "rec": recovered,
-            "psp_bits": psp_bits
-        })
+            self.finished.emit({
+                "t": t,
+                "errors": errors,
+                "ber": ber,
+                "psp": psp,
+                "phase": phase_diskr,
+                "lpf_cos": lpf_cos[:-1],
+                "lpf_sin": lpf_sin[:-1],
+                "t_rec": t_rec,
+                "rec": recovered,
+                "psp_bits": psp_bits
+            })
+        except Exception as e:
+            self.error_occurred.emit(str(e))
 
 
 class PSDWorker(QThread):
     finished = Signal(dict)
+    error_occurred = Signal(str)
 
     def __init__(self, signal, fs, transition):
         super().__init__()
@@ -2096,12 +2282,17 @@ class PSDWorker(QThread):
         return f, 10 * np.log10(Pxx + 1e-20)
 
     def run(self):
-        f, pxx = self.compute_psd(self.signal, self.fs, self.transition)
-        self.finished.emit({"f_vco": f, "pxx_vco": pxx})
+
+        try:
+            f, pxx = self.compute_psd(self.signal, self.fs, self.transition)
+            self.finished.emit({"f_vco": f, "pxx_vco": pxx})
+        except Exception as e:
+            self.error_occurred.emit(str(e))
 
 
 class WorkerPart4(QThread):
     finished = Signal(dict)
+    error_occurred = Signal(str)
 
     def __init__(self, T, Fs, Fc, bits_per_second,
                  filter_type, order_mode, filter_order,
@@ -2133,221 +2324,225 @@ class WorkerPart4(QThread):
         self.carrier_only = carrier_only
 
     def run(self):
-        Ts = 1 / self.Fs
-        t = np.arange(0, self.T, Ts)
 
-        num_bits = int(self.T * self.bits_per_second)
+        try:
+            Ts = 1 / self.Fs
+            t = np.arange(0, self.T, Ts)
 
-        # ПСП
-        bits = np.random.randint(0, 2, num_bits)
-        bits = np.where(bits == 0, -1, 1)
-        psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
+            num_bits = int(self.T * self.bits_per_second)
 
-        # ========== ИСПРАВЛЕНО: BPSK с частотной расстройкой ==========
-        if self.carrier_only:
-            signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
-        else:
-            signal_bpsk = cospi(2 * (self.Fc + self.freq_offset) * t + (psp + 1) / 2)
+            # ПСП
+            bits = np.random.randint(0, 2, num_bits)
+            bits = np.where(bits == 0, -1, 1)
+            psp = np.repeat(bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
-        # шум
-        if self.noise_params['add_noise']:
-            P = np.mean(signal_bpsk ** 2)
-
-            if self.noise_params['mode'] == 'ebn0':
-                SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
+            # ========== ИСПРАВЛЕНО: BPSK с частотной расстройкой ==========
+            if self.carrier_only:
+                signal_bpsk = np.cos(2 * np.pi * self.Fc * t)
             else:
-                SNR = self.noise_params['value']
+                signal_bpsk = cospi(2 * (self.Fc + self.freq_offset) * t + (psp + 1) / 2)
 
-            noise_power = P / (10 ** (SNR / 10))
-            noise = np.sqrt(noise_power) * np.random.randn(len(t))
-            noisy = signal_bpsk + noise
-        else:
-            noisy = signal_bpsk
+            # шум
+            if self.noise_params['add_noise']:
+                P = np.mean(signal_bpsk ** 2)
 
-        # фильтр (используем параметры из глобальных)
-        Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
-        Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
+                if self.noise_params['mode'] == 'ebn0':
+                    SNR = self.noise_params['value'] + 10 * np.log10(self.bits_per_second / (self.Fs / 2))
+                else:
+                    SNR = self.noise_params['value']
 
-        if self.order_mode == 1:
-            N = self.filter_order
-            Wn = Wp_norm
-
-            if self.filter_type == "ellip":
-                b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
-            elif self.filter_type == "butter":
-                b, a = signal.butter(N, Wn, btype='band')
-            elif self.filter_type == "cheby1":
-                b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
-            elif self.filter_type == "cheby2":
-                b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                noise_power = P / (10 ** (SNR / 10))
+                noise = np.sqrt(noise_power) * np.random.randn(len(t))
+                noisy = signal_bpsk + noise
             else:
-                b, a = signal.bessel(N, Wn, btype='band', norm='phase')
-        else:
-            if self.filter_type == "ellip":
-                N, Wn = signal.ellipord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
-            elif self.filter_type == "butter":
-                N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.butter(N, Wn, btype='band')
-            elif self.filter_type == "cheby1":
-                N, Wn = signal.cheby1ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
-            elif self.filter_type == "cheby2":
-                N, Wn = signal.cheby2ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                noisy = signal_bpsk
+
+            # фильтр (используем параметры из глобальных)
+            Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
+            Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
+
+            if self.order_mode == 1:
+                N = self.filter_order
+                Wn = Wp_norm
+
+                if self.filter_type == "ellip":
+                    b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+                elif self.filter_type == "butter":
+                    b, a = signal.butter(N, Wn, btype='band')
+                elif self.filter_type == "cheby1":
+                    b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+                elif self.filter_type == "cheby2":
+                    b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                else:
+                    b, a = signal.bessel(N, Wn, btype='band', norm='phase')
             else:
-                N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
-                b, a = signal.bessel(N, Wn, btype='band', norm='phase')
+                if self.filter_type == "ellip":
+                    N, Wn = signal.ellipord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.ellip(N, self.gpass, self.gstop, Wn, btype='band')
+                elif self.filter_type == "butter":
+                    N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.butter(N, Wn, btype='band')
+                elif self.filter_type == "cheby1":
+                    N, Wn = signal.cheby1ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.cheby1(N, self.gpass, Wn, btype='band')
+                elif self.filter_type == "cheby2":
+                    N, Wn = signal.cheby2ord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.cheby2(N, self.gstop, Wn, btype='band')
+                else:
+                    N, Wn = signal.buttord(Wp_norm, Ws_norm, self.gpass, self.gstop)
+                    b, a = signal.bessel(N, Wn, btype='band', norm='phase')
 
-        filtered = signal.lfilter(b, a, noisy)
+            filtered = signal.lfilter(b, a, noisy)
 
-        # PLL (используем параметры из глобальных)
-        Gp, Sr, T_lf = self.Gp, self.Sr, self.T_lf
-        F_vco = self.Fc
-        delay = np.deg2rad(self.delay_deg) / np.pi
+            # PLL (используем параметры из глобальных)
+            Gp, Sr, T_lf = self.Gp, self.Sr, self.T_lf
+            F_vco = self.Fc
+            delay = np.deg2rad(self.delay_deg) / np.pi
 
-        VCO_cos = cospi(2 * F_vco * t - delay)
-        VCO_sin = sinpi(2 * F_vco * t - delay)
+            VCO_cos = cospi(2 * F_vco * t - delay)
+            VCO_sin = sinpi(2 * F_vco * t - delay)
 
-        mul_cos = np.zeros(len(t))
-        mul_sin = np.zeros(len(t))
-        lpf_cos = np.zeros(len(t) + 1)
-        lpf_sin = np.zeros(len(t) + 1)
-        phase = np.zeros(len(t))
-        uf = np.zeros(len(t) + 1)
-        est = np.zeros(len(t) + 2)
-        freq = np.zeros(len(t) + 1)
+            mul_cos = np.zeros(len(t))
+            mul_sin = np.zeros(len(t))
+            lpf_cos = np.zeros(len(t) + 1)
+            lpf_sin = np.zeros(len(t) + 1)
+            phase = np.zeros(len(t))
+            uf = np.zeros(len(t) + 1)
+            est = np.zeros(len(t) + 2)
+            freq = np.zeros(len(t) + 1)
 
-        d_lf = Ts / T_lf
+            d_lf = Ts / T_lf
 
-        for i in range(len(t) - 1):
-            mul_cos[i] = filtered[i] * VCO_cos[i]
-            mul_sin[i] = filtered[i] * VCO_sin[i]
+            for i in range(len(t) - 1):
+                mul_cos[i] = filtered[i] * VCO_cos[i]
+                mul_sin[i] = filtered[i] * VCO_sin[i]
 
-            lpf_cos[i + 1] = mul_cos[i] * d_lf + lpf_cos[i] * (1 - d_lf)
-            lpf_sin[i + 1] = mul_sin[i] * d_lf + lpf_sin[i] * (1 - d_lf)
+                lpf_cos[i + 1] = mul_cos[i] * d_lf + lpf_cos[i] * (1 - d_lf)
+                lpf_sin[i + 1] = mul_sin[i] * d_lf + lpf_sin[i] * (1 - d_lf)
 
-            phase[i] = lpf_cos[i] * lpf_sin[i]
+                phase[i] = lpf_cos[i] * lpf_sin[i]
 
-            if i > 0:
-                uf[i + 1] = uf[i] + Gp * phase[i] - (Gp - Ts) * phase[i - 1]
-            else:
-                uf[i + 1] = uf[i] + Gp * phase[i]
+                if i > 0:
+                    uf[i + 1] = uf[i] + Gp * phase[i] - (Gp - Ts) * phase[i - 1]
+                else:
+                    uf[i + 1] = uf[i] + Gp * phase[i]
 
-            freq[i + 1] = Sr * uf[i + 1]
-            est[i + 2] = est[i + 1] + Ts * freq[i + 1]
+                freq[i + 1] = Sr * uf[i + 1]
+                est[i + 2] = est[i + 1] + Ts * freq[i + 1]
 
-            arg = F_vco * t[i + 1] + est[i + 1] + delay
-            VCO_cos[i + 1] = cospi(2 * arg)
-            VCO_sin[i + 1] = sinpi(2 * arg)
+                arg = F_vco * t[i + 1] + est[i + 1] + delay
+                VCO_cos[i + 1] = cospi(2 * arg)
+                VCO_sin[i + 1] = sinpi(2 * arg)
 
-        # === Шум ГУН ===
-        phase_noise_out = np.cumsum(2e-3 * np.random.randn(len(t)))
-        VCO_out = np.cos(2 * np.pi * self.Fc * t + phase_noise_out)
-        VCO_out += 1e-4 * np.random.randn(len(t))
+            # === Шум ГУН ===
+            phase_noise_out = np.cumsum(2e-3 * np.random.randn(len(t)))
+            VCO_out = np.cos(2 * np.pi * self.Fc * t + phase_noise_out)
+            VCO_out += 1e-4 * np.random.randn(len(t))
 
-        # Сохраняем для последующего расчёта СПМ
-        self.last_VCO_out = VCO_out
-        self.last_Fs = self.Fs
+            # Сохраняем для последующего расчёта СПМ
+            self.last_VCO_out = VCO_out
+            self.last_Fs = self.Fs
 
-        # ========== ПРАВИЛЬНАЯ ДЕМОДУЛЯЦИЯ (как в части 3) ==========
-        demod_signal = lpf_cos[:-1] - lpf_sin[:-1]
+            # ========== ПРАВИЛЬНАЯ ДЕМОДУЛЯЦИЯ (как в части 3) ==========
+            demod_signal = lpf_cos[:-1] - lpf_sin[:-1]
 
-        samples_per_bit = int(self.Fs / self.bits_per_second)
+            samples_per_bit = int(self.Fs / self.bits_per_second)
 
-        # 1. Timing recovery (поиск оптимального offset)
-        nbits_total = len(demod_signal) // samples_per_bit
+            # 1. Timing recovery (поиск оптимального offset)
+            nbits_total = len(demod_signal) // samples_per_bit
 
-        best_offset = 0
-        best_metric = -np.inf
-        for offset in range(samples_per_bit):
-            metric = 0
+            best_offset = 0
+            best_metric = -np.inf
+            for offset in range(samples_per_bit):
+                metric = 0
+                for k in range(nbits_total):
+                    idx = offset + k * samples_per_bit
+                    if idx < len(demod_signal):
+                        metric += abs(demod_signal[idx])
+                if metric > best_metric:
+                    best_metric = metric
+                    best_offset = offset
+
+            # 2. Декодирование с найденным offset
+            recovered_raw = np.zeros(nbits_total)
             for k in range(nbits_total):
-                idx = offset + k * samples_per_bit
+                idx = best_offset + k * samples_per_bit
                 if idx < len(demod_signal):
-                    metric += abs(demod_signal[idx])
-            if metric > best_metric:
-                best_metric = metric
-                best_offset = offset
+                    recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
 
-        # 2. Декодирование с найденным offset
-        recovered_raw = np.zeros(nbits_total)
-        for k in range(nbits_total):
-            idx = best_offset + k * samples_per_bit
-            if idx < len(demod_signal):
-                recovered_raw[k] = 1 if demod_signal[idx] > 0 else -1
+            if self.carrier_only:
+                if np.mean(recovered_raw) < 0:
+                    recovered_raw = -recovered_raw
 
-        if self.carrier_only:
-            if np.mean(recovered_raw) < 0:
+            # # 3. Выравнивание через корреляцию (компенсация задержки)
+            # psp_bits_full = bits[:nbits_total]
+            # corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+            # shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+            #
+            # # Компенсируем сдвиг
+            # if shift > 0:
+            #     recovered = recovered_raw[shift:]
+            #     psp_bits = psp_bits_full[:len(recovered)]
+            # elif shift < 0:
+            #     shift_abs = -shift
+            #     recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
+            #     psp_bits = psp_bits_full[shift_abs:]
+            # else:
+            #     recovered = recovered_raw
+            #     psp_bits = psp_bits_full
+            # 3. Выравнивание через корреляцию (компенсация задержки)
+            psp_bits_full = bits[:nbits_total]
+            corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
+            shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+
+            # Определяем знак (инверсия) по максимальной корреляции
+            max_corr_value = corr[shift + len(psp_bits_full) - 1]
+            if max_corr_value < 0:
                 recovered_raw = -recovered_raw
 
-        # # 3. Выравнивание через корреляцию (компенсация задержки)
-        # psp_bits_full = bits[:nbits_total]
-        # corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
-        # shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
-        #
-        # # Компенсируем сдвиг
-        # if shift > 0:
-        #     recovered = recovered_raw[shift:]
-        #     psp_bits = psp_bits_full[:len(recovered)]
-        # elif shift < 0:
-        #     shift_abs = -shift
-        #     recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
-        #     psp_bits = psp_bits_full[shift_abs:]
-        # else:
-        #     recovered = recovered_raw
-        #     psp_bits = psp_bits_full
-        # 3. Выравнивание через корреляцию (компенсация задержки)
-        psp_bits_full = bits[:nbits_total]
-        corr = np.correlate(recovered_raw, psp_bits_full, mode='full')
-        shift = np.argmax(np.abs(corr)) - len(psp_bits_full) + 1
+            # Компенсируем сдвиг
+            if shift > 0:
+                recovered = recovered_raw[shift:]
+                psp_bits = psp_bits_full[:len(recovered)]
+            elif shift < 0:
+                shift_abs = -shift
+                recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
+                psp_bits = psp_bits_full[shift_abs:]
+            else:
+                recovered = recovered_raw
+                psp_bits = psp_bits_full
 
-        # Определяем знак (инверсия) по максимальной корреляции
-        max_corr_value = corr[shift + len(psp_bits_full) - 1]
-        if max_corr_value < 0:
-            recovered_raw = -recovered_raw
+            # 4. Прямое сравнение БЕЗ компенсации инверсии (как в реальной системе)
+            if len(recovered) > 0 and len(psp_bits) > 0:
+                min_len = min(len(recovered), len(psp_bits))
+                rec_check = recovered[:min_len]
+                psp_check = psp_bits[:min_len]
 
-        # Компенсируем сдвиг
-        if shift > 0:
-            recovered = recovered_raw[shift:]
-            psp_bits = psp_bits_full[:len(recovered)]
-        elif shift < 0:
-            shift_abs = -shift
-            recovered = recovered_raw[:-shift_abs] if shift_abs > 0 else recovered_raw
-            psp_bits = psp_bits_full[shift_abs:]
-        else:
-            recovered = recovered_raw
-            psp_bits = psp_bits_full
+                # Реальная система: просто сравниваем, что получили
+                errors = np.sum(rec_check != psp_check)
+                ber = errors / min_len if min_len > 0 else 1.0
+            else:
+                errors = 0
+                ber = 1.0
 
-        # 4. Прямое сравнение БЕЗ компенсации инверсии (как в реальной системе)
-        if len(recovered) > 0 and len(psp_bits) > 0:
-            min_len = min(len(recovered), len(psp_bits))
-            rec_check = recovered[:min_len]
-            psp_check = psp_bits[:min_len]
+            # Время для восстановленной ПСП
+            t_rec = np.arange(len(psp_bits)) / self.bits_per_second
 
-            # Реальная система: просто сравниваем, что получили
-            errors = np.sum(rec_check != psp_check)
-            ber = errors / min_len if min_len > 0 else 1.0
-        else:
-            errors = 0
-            ber = 1.0
-
-        # Время для восстановленной ПСП
-        t_rec = np.arange(len(psp_bits)) / self.bits_per_second
-
-        # Отправляем основные сигналы
-        self.finished.emit({
-            "t": t,
-            "psp": psp,
-            "phase": phase,
-            "lpf_cos": lpf_cos[:-1],
-            "lpf_sin": lpf_sin[:-1],
-            "t_rec": t_rec,
-            "rec": recovered,
-            "psp_bits": psp_bits,
-            "errors": errors,
-            "ber": ber
-        })
+            # Отправляем основные сигналы
+            self.finished.emit({
+                "t": t,
+                "psp": psp,
+                "phase": phase,
+                "lpf_cos": lpf_cos[:-1],
+                "lpf_sin": lpf_sin[:-1],
+                "t_rec": t_rec,
+                "rec": recovered,
+                "psp_bits": psp_bits,
+                "errors": errors,
+                "ber": ber
+            })
+        except Exception as e:
+            self.error_occurred.emit(str(e))
 
 
 # class WorkerPart5(QThread):
@@ -2424,6 +2619,7 @@ class WorkerPart4(QThread):
 #         })
 class WorkerPart5(QThread):
     finished = Signal(dict)
+    error_occurred = Signal(str)
 
     def __init__(self, T, Fs, Fc, bits_per_second,
                  Wp_low, Wp_high, Ws_low, Ws_high,
@@ -2446,57 +2642,61 @@ class WorkerPart5(QThread):
         self.phase_step = phase_step
 
     def run(self):
-        Ts = 1 / self.Fs
-        t = np.arange(0, self.T, Ts)
 
-        # Формирование случайной ПСП
-        num_bits = int(self.T * self.bits_per_second)
-        psp_bits = np.random.randint(0, 2, num_bits)
-        psp_bits = np.where(psp_bits == 0, -1, 1)
-        psp_signal = np.repeat(psp_bits, int(self.Fs / self.bits_per_second))[:len(t)]
+        try:
+            Ts = 1 / self.Fs
+            t = np.arange(0, self.T, Ts)
 
-        # BPSK сигнал
-        Signal_BPSK = np.cos(2 * np.pi * self.Fc * t + np.pi * (psp_signal + 1) / 2)
+            # Формирование случайной ПСП
+            num_bits = int(self.T * self.bits_per_second)
+            psp_bits = np.random.randint(0, 2, num_bits)
+            psp_bits = np.where(psp_bits == 0, -1, 1)
+            psp_signal = np.repeat(psp_bits, int(self.Fs / self.bits_per_second))[:len(t)]
 
-        # Полосовой фильтр (параметры из глобальных)
-        Wp_band = np.array([self.Wp_low, self.Wp_high]) / (self.Fs / 2)
-        Ws_band = np.array([self.Ws_low, self.Ws_high]) / (self.Fs / 2)
-        N_band, Wn_band = signal.ellipord(Wp_band, Ws_band, self.gpass, self.gstop)
-        b_band, a_band = signal.ellip(N_band, self.gpass, self.gstop, Wn_band, btype='band')
-        Signal_BPSK_filtered = signal.lfilter(b_band, a_band, Signal_BPSK)
+            # BPSK сигнал
+            Signal_BPSK = np.cos(2 * np.pi * self.Fc * t + np.pi * (psp_signal + 1) / 2)
 
-        # Дискриминационная характеристика
-        phase_diff_degrees = np.arange(self.phase_min, self.phase_max + self.phase_step, self.phase_step)
-        phase_diff_radians = np.deg2rad(phase_diff_degrees) + np.deg2rad(self.phase_shift)
+            # Полосовой фильтр (параметры из глобальных)
+            Wp_band = np.array([self.Wp_low, self.Wp_high]) / (self.Fs / 2)
+            Ws_band = np.array([self.Ws_low, self.Ws_high]) / (self.Fs / 2)
+            N_band, Wn_band = signal.ellipord(Wp_band, Ws_band, self.gpass, self.gstop)
+            b_band, a_band = signal.ellip(N_band, self.gpass, self.gstop, Wn_band, btype='band')
+            Signal_BPSK_filtered = signal.lfilter(b_band, a_band, Signal_BPSK)
 
-        output_fd_all = np.zeros(len(phase_diff_degrees))
+            # Дискриминационная характеристика
+            phase_diff_degrees = np.arange(self.phase_min, self.phase_max + self.phase_step, self.phase_step)
+            phase_diff_radians = np.deg2rad(phase_diff_degrees) + np.deg2rad(self.phase_shift)
 
-        # ФНЧ для детектора (частота среза 100 Гц – можно оставить или вынести в параметры)
-        Wp_low = 100 / (self.Fs / 2)
-        Ws_low = 150 / (self.Fs / 2)
-        N_low, Wn_low = signal.ellipord(Wp_low, Ws_low, 1, 40)
-        b_low, a_low = signal.ellip(N_low, 1, 40, Wn_low, btype='low')
+            output_fd_all = np.zeros(len(phase_diff_degrees))
 
-        for k, phase_diff in enumerate(phase_diff_radians):
-            VCO_cos = np.cos(2 * np.pi * self.Fc * t + phase_diff)
-            VCO_sin = np.sin(2 * np.pi * self.Fc * t + phase_diff)
+            # ФНЧ для детектора (частота среза 100 Гц – можно оставить или вынести в параметры)
+            Wp_low = 100 / (self.Fs / 2)
+            Ws_low = 150 / (self.Fs / 2)
+            N_low, Wn_low = signal.ellipord(Wp_low, Ws_low, 1, 40)
+            b_low, a_low = signal.ellip(N_low, 1, 40, Wn_low, btype='low')
 
-            mul_cos = Signal_BPSK_filtered * VCO_cos
-            mul_sin = Signal_BPSK_filtered * VCO_sin
+            for k, phase_diff in enumerate(phase_diff_radians):
+                VCO_cos = np.cos(2 * np.pi * self.Fc * t + phase_diff)
+                VCO_sin = np.sin(2 * np.pi * self.Fc * t + phase_diff)
 
-            lpf_cos = signal.lfilter(b_low, a_low, mul_cos)
-            lpf_sin = signal.lfilter(b_low, a_low, mul_sin)
+                mul_cos = Signal_BPSK_filtered * VCO_cos
+                mul_sin = Signal_BPSK_filtered * VCO_sin
 
-            output_fd_all[k] = np.mean(lpf_cos * lpf_sin)
+                lpf_cos = signal.lfilter(b_low, a_low, mul_cos)
+                lpf_sin = signal.lfilter(b_low, a_low, mul_sin)
 
-        # Нормализация
-        if max(abs(output_fd_all)) > 0:
-            output_fd_all = output_fd_all / max(abs(output_fd_all))
+                output_fd_all[k] = np.mean(lpf_cos * lpf_sin)
 
-        self.finished.emit({
-            "phase_diff": phase_diff_degrees,
-            "output": output_fd_all
-        })
+            # Нормализация
+            if max(abs(output_fd_all)) > 0:
+                output_fd_all = output_fd_all / max(abs(output_fd_all))
+
+            self.finished.emit({
+                "phase_diff": phase_diff_degrees,
+                "output": output_fd_all
+            })
+        except Exception as e:
+            self.error_occurred.emit(str(e))
 
 class PlotTab(QWidget):
     def __init__(self, title, xlabel="Время, с", ylabel="", subplots=1):
@@ -2630,7 +2830,7 @@ class GlobalParamsWidget(QWidget):
 
         # Параметры фильтра (объединенные в один виджет)
         self.filter_params = FilterCombinedWidget()
-        # self.params_tabs.addTab(self.filter_params, "Параметры фильтра")
+        self.params_tabs.addTab(self.filter_params, "Параметры фильтра")
 
         # Параметры ФАПЧ
         self.pll_params = PLLParamsWidget()
@@ -3406,6 +3606,67 @@ class MainWindow(QMainWindow):
         main_widget.setLayout(main_layout)
         self.setCentralWidget(main_widget)
 
+    def validate_filter_params(self):
+        """Проверяет корректность параметров полосового фильтра.
+           Возвращает список ошибок (пустой, если всё хорошо)."""
+        filter_params = self.global_params.get_filter_params()
+        sys_params = self.global_params.get_system_params()
+        Fs = sys_params['Fs']
+        Wp_low = filter_params['Wp_low']
+        Wp_high = filter_params['Wp_high']
+        Ws_low = filter_params['Ws_low']
+        Ws_high = filter_params['Ws_high']
+        order_mode = filter_params['order_mode']
+        order = filter_params['order']
+        errors = []
+
+        # 1. Положительность
+        if Wp_low <= 0 or Wp_high <= 0 or Ws_low <= 0 or Ws_high <= 0:
+            errors.append("Все частоты должны быть положительными.")
+
+        # 2. Полоса пропускания
+        if Wp_low >= Wp_high:
+            errors.append("Нижняя частота пропускания должна быть строго меньше верхней.")
+
+        # 3. Полоса заграждения
+        if Ws_low >= Ws_high:
+            errors.append("Нижняя частота заграждения должна быть строго меньше верхней.")
+
+        # 4. Соотношение полос (для полосового фильтра)
+        if Wp_low <= Ws_low:
+            errors.append(
+                "Нижняя частота пропускания должна быть больше нижней частоты заграждения (полоса пропускания уже полосы заграждения).")
+
+        if Wp_high >= Ws_high:
+            errors.append(
+                "Верхняя частота пропускания должна быть меньше верхней частоты заграждения (полоса пропускания уже полосы заграждения).")
+
+        # 5. Ограничение по Найквисту
+        nyquist = Fs / 2
+        if Wp_high >= nyquist:
+            errors.append(
+                f"Верхняя частота пропускания ({Wp_high} Гц) должна быть меньше частоты Найквиста ({nyquist} Гц).")
+        if Ws_high >= nyquist:
+            errors.append(
+                f"Верхняя частота заграждения ({Ws_high} Гц) должна быть меньше частоты Найквиста ({nyquist} Гц).")
+
+        # 6. Ручной режим: порядок должен быть >= 1
+        if order_mode == 0:  # ручной
+            if order < 1:
+                errors.append("Порядок фильтра должен быть не менее 1.")
+
+        return errors
+
+    def on_worker_error(self, error_msg):
+        """Обрабатывает ошибки, возникшие в рабочем потоке."""
+        # Закрываем прогресс-диалог
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.close()
+        # Разблокируем интерфейс
+        self.set_controls_enabled(True)
+        # Показываем сообщение
+        QMessageBox.critical(self, "Ошибка расчёта",
+                             f"Во время расчёта произошла ошибка:\n\n{error_msg}")
 
     def _get_part1_graphs(self):
         return [
@@ -4354,6 +4615,13 @@ class MainWindow(QMainWindow):
     def start_part1(self):
         """Запуск части 1 с глобальными параметрами"""
 
+        # Проверяем параметры фильтра
+        errors = self.validate_filter_params()
+        if errors:
+            QMessageBox.critical(self, "Некорректные параметры фильтра",
+                                 "\n".join(errors))
+            return
+
         # Создаем прогресс-бар
         self.progress_dialog = QProgressDialog("Выполняется расчет части 1...", "Отмена", 0, 0, self)
         self.progress_dialog.setWindowTitle("Расчет")
@@ -4388,6 +4656,7 @@ class MainWindow(QMainWindow):
             carrier_only=self.global_params.is_carrier_only(),
             delay_deg=pll_params['delay_deg']
         )
+        self.worker.error_occurred.connect(self.on_worker_error)
         self.worker.finished.connect(self.update_plots_part1)
         self.worker.start()
 
@@ -4424,6 +4693,13 @@ class MainWindow(QMainWindow):
 
     def start_part2(self):
         """Запуск части 2 с глобальными параметрами"""
+
+        # Проверяем параметры фильтра
+        errors = self.validate_filter_params()
+        if errors:
+            QMessageBox.critical(self, "Некорректные параметры фильтра",
+                                 "\n".join(errors))
+            return
 
         # Создаем прогресс-бар
         self.progress_dialog = QProgressDialog("Выполняется расчет части 2...", "Отмена", 0, 0, self)
@@ -4462,6 +4738,7 @@ class MainWindow(QMainWindow):
             delay_deg=pll_params['delay_deg'],
             carrier_only=self.global_params.is_carrier_only()
         )
+        self.worker2.error_occurred.connect(self.on_worker_error)
         self.worker2.finished.connect(self.update_part2)
         self.worker2.start()
 
@@ -4767,6 +5044,13 @@ class MainWindow(QMainWindow):
     def start_part3(self):
         """Запуск части 3 с глобальными параметрами"""
 
+        # Проверяем параметры фильтра
+        errors = self.validate_filter_params()
+        if errors:
+            QMessageBox.critical(self, "Некорректные параметры фильтра",
+                                 "\n".join(errors))
+            return
+
         # Создаем прогресс-бар
         self.progress_dialog = QProgressDialog("Выполняется расчет части 4...", "Отмена", 0, 0, self)
         self.progress_dialog.setWindowTitle("Расчет")
@@ -4805,6 +5089,7 @@ class MainWindow(QMainWindow):
             dphi=self.dphi.value(),
             carrier_only=self.global_params.is_carrier_only()
         )
+        self.worker3.error_occurred.connect(self.on_worker_error)
         self.worker3.finished.connect(self.update_part3)
         self.worker3.start()
         self.btn_psd.setEnabled(False)
@@ -4887,6 +5172,7 @@ class MainWindow(QMainWindow):
             self.last_fs,
             self.transition.value()
         )
+        self.psd_worker.error_occurred.connect(self.on_worker_error)
         self.psd_worker.finished.connect(self.update_psd)
         self.psd_worker.start()
 
@@ -4923,6 +5209,14 @@ class MainWindow(QMainWindow):
 
     def start_part4(self):
         """Запуск части 4 с глобальными параметрами"""
+
+        # Проверяем параметры фильтра
+        errors = self.validate_filter_params()
+        if errors:
+            QMessageBox.critical(self, "Некорректные параметры фильтра",
+                                 "\n".join(errors))
+            return
+
         # Создаем прогресс-бар
         self.progress_dialog = QProgressDialog("Выполняется расчет части 5...", "Отмена", 0, 0, self)
         self.progress_dialog.setWindowTitle("Расчет")
@@ -4961,6 +5255,7 @@ class MainWindow(QMainWindow):
             freq_offset=self.freq_offset.value(),
             carrier_only=self.global_params.is_carrier_only()
         )
+        self.worker4.error_occurred.connect(self.on_worker_error)
         self.worker4.finished.connect(self.update_part4)
         self.worker4.start()
         self.btn_psd4.setEnabled(False)
@@ -5444,6 +5739,14 @@ class MainWindow(QMainWindow):
     #     self.worker5.finished.connect(self.update_part5)
     #     self.worker5.start()
     def start_part5(self):
+
+        # Проверяем параметры фильтра
+        errors = self.validate_filter_params()
+        if errors:
+            QMessageBox.critical(self, "Некорректные параметры фильтра",
+                                 "\n".join(errors))
+            return
+
         # Параметры из интерфейса части 5
         phase_min = self.phase_min.value()
         phase_max = self.phase_max.value()
@@ -5494,6 +5797,7 @@ class MainWindow(QMainWindow):
             phase_max=phase_max,
             phase_step=phase_step
         )
+        self.worker5.error_occurred.connect(self.on_worker_error)
         self.worker5.finished.connect(self.update_part5)
         self.worker5.start()
 
