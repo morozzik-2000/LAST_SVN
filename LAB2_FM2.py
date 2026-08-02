@@ -1257,13 +1257,7 @@ class FilterSettingsWidget(QWidget):
 
         В <b>автоматическом режиме</b> программа сама определит, что нужен 7-й порядок, и использует его – вы получите фильтр, точно соответствующий требованиям.<br><br>
 
-        <b>Примечание по Бесселю:</b> для этого типа фильтра доступна настройка нормировки:
-        <ul>
-          <li><b>фазовая</b> – плоская фаза в полосе пропускания (по умолчанию)</li>
-          <li><b>групповая задержка</b> – максимально плоская групповая задержка</li>
-          <li><b>амплитудная</b> – максимально плоская АЧХ</li>
-        </ul>
-
+    
         <b>Совет:</b> Если не уверены, используйте автоматический режим – он подберёт порядок оптимально.
         """)
         msg.exec()
@@ -1645,7 +1639,7 @@ class Worker(QThread):
             Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
             Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
 
-            if self.order_mode == 1:
+            if self.order_mode == 0:
                 N = self.filter_order
                 Wn = Wp_norm
                 if self.filter_type == "ellip":
@@ -1839,7 +1833,7 @@ class WorkerPart2(QThread):
             Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
             Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
 
-            if self.order_mode == 1:
+            if self.order_mode == 0:
                 N = self.filter_order
                 Wn = Wp_norm
 
@@ -2089,7 +2083,7 @@ class WorkerPart3(QThread):
             Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
             Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
 
-            if self.order_mode == 1:
+            if self.order_mode == 0:
                 N = self.filter_order
                 Wn = Wp_norm
 
@@ -2361,7 +2355,7 @@ class WorkerPart4(QThread):
             Wp_norm = [self.Wp_low / (self.Fs / 2), self.Wp_high / (self.Fs / 2)]
             Ws_norm = [self.Ws_low / (self.Fs / 2), self.Ws_high / (self.Fs / 2)]
 
-            if self.order_mode == 1:
+            if self.order_mode == 0:
                 N = self.filter_order
                 Wn = Wp_norm
 
@@ -2830,7 +2824,7 @@ class GlobalParamsWidget(QWidget):
 
         # Параметры фильтра (объединенные в один виджет)
         self.filter_params = FilterCombinedWidget()
-        self.params_tabs.addTab(self.filter_params, "Параметры фильтра")
+        self.params_tabs.addTab(self.filter_params, "Настройка полосового фильтра")
 
         # Параметры ФАПЧ
         self.pll_params = PLLParamsWidget()
